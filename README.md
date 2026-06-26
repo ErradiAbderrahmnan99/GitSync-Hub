@@ -50,10 +50,3 @@ Start the local server using:
 npm run dev
 ```
 Open your browser and navigate to **[http://localhost:3000](http://localhost:3000)**.
-
----
-
-## 👤 Developer
-Created and maintained by **Abderrahmane Erradi**
-
----
