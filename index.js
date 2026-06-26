@@ -16,21 +16,49 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Load environment variables from .env if it exists
+const ENV_FILE = path.join(__dirname, '.env');
+if (fs.existsSync(ENV_FILE)) {
+  try {
+    const envContent = fs.readFileSync(ENV_FILE, 'utf8');
+    envContent.split('\n').forEach(line => {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith('#')) {
+        const firstEquals = trimmed.indexOf('=');
+        if (firstEquals !== -1) {
+          const key = trimmed.slice(0, firstEquals).trim();
+          const value = trimmed.slice(firstEquals + 1).trim().replace(/^"|^'|"$|'$/g, '');
+          process.env[key] = value;
+        }
+      }
+    });
+  } catch (e) {
+    console.error('Error reading .env file:', e.message);
+  }
+}
+
 const CONFIG_FILE = path.join(__dirname, 'config.json');
 
 // Default paths for the two projects
 let PROJECTS = {
-  ADHA: '/home/jojo/development/integral/ADHA',
-  CCISTTA: '/home/jojo/development/integral/CCISTTA'
+  PROJECT_A: process.env.PROJECT_A_PATH || '/home/jojo/development/integral/ADHA',
+  PROJECT_B: process.env.PROJECT_B_PATH || '/home/jojo/development/integral/CCISTTA'
 };
 
 // Load saved configuration if it exists
 if (fs.existsSync(CONFIG_FILE)) {
   try {
     const saved = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-    if (saved.ADHA && saved.CCISTTA) {
+    if (saved.PROJECT_A && saved.PROJECT_B) {
       PROJECTS = saved;
       console.log('Loaded project paths from config.json:', PROJECTS);
+    } else if (saved.ADHA && saved.CCISTTA) {
+      // Migrate legacy config keys
+      PROJECTS = {
+        PROJECT_A: saved.ADHA,
+        PROJECT_B: saved.CCISTTA
+      };
+      console.log('Migrated legacy project paths from config.json:', PROJECTS);
     }
   } catch (e) {
     console.error('Error loading config.json, using defaults:', e.message);
@@ -157,8 +185,8 @@ app.get('/api/status', (req, res) => {
     }
   }
 
-  // Post-process changes to flag files that are identical between ADHA and CCISTTA
-  if (result.ADHA && result.CCISTTA && result.ADHA.changes && result.CCISTTA.changes) {
+  // Post-process changes to flag files that are identical between PROJECT_A and PROJECT_B
+  if (result.PROJECT_A && result.PROJECT_B && result.PROJECT_A.changes && result.PROJECT_B.changes) {
     const checkIdentical = (change, sourceKey, destKey) => {
       const sourceFile = path.join(PROJECTS[sourceKey], change.path);
       const destFile = path.join(PROJECTS[destKey], change.path);
@@ -176,8 +204,8 @@ app.get('/api/status', (req, res) => {
       }
     };
 
-    result.ADHA.changes.forEach(change => checkIdentical(change, 'ADHA', 'CCISTTA'));
-    result.CCISTTA.changes.forEach(change => checkIdentical(change, 'CCISTTA', 'ADHA'));
+    result.PROJECT_A.changes.forEach(change => checkIdentical(change, 'PROJECT_A', 'PROJECT_B'));
+    result.PROJECT_B.changes.forEach(change => checkIdentical(change, 'PROJECT_B', 'PROJECT_A'));
   }
 
   res.json(result);
@@ -207,11 +235,12 @@ app.post('/api/config', (req, res) => {
     return res.status(400).json({ error: `Path B does not exist: ${pathB}` });
   }
 
-  PROJECTS.ADHA = resolvedA;
-  PROJECTS.CCISTTA = resolvedB;
+  PROJECTS.PROJECT_A = resolvedA;
+  PROJECTS.PROJECT_B = resolvedB;
 
   try {
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(PROJECTS, null, 2), 'utf8');
+    fs.writeFileSync(ENV_FILE, `PORT=${PORT}\nPROJECT_A_PATH=${resolvedA}\nPROJECT_B_PATH=${resolvedB}\n`, 'utf8');
     res.json({
       success: true,
       message: 'Configuration saved successfully.',
@@ -275,8 +304,8 @@ app.get('/api/diff', (req, res) => {
     return res.status(400).json({ error: 'File parameter is required' });
   }
 
-  const projA = PROJECTS.ADHA;
-  const projB = PROJECTS.CCISTTA;
+  const projA = PROJECTS.PROJECT_A;
+  const projB = PROJECTS.PROJECT_B;
 
   const fileA = path.join(projA, file);
   const fileB = path.join(projB, file);
@@ -307,7 +336,7 @@ app.get('/api/diff', (req, res) => {
     }
   } else {
     // Local Git diff against HEAD
-    const activeProject = sourceProject || 'ADHA';
+    const activeProject = sourceProject || 'PROJECT_A';
     const cwd = PROJECTS[activeProject];
 
     if (!cwd) {

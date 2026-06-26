@@ -1,11 +1,11 @@
 // State Management
 let appState = {
-  ADHA: { name: 'ADHA', changes: [], selected: new Set() },
-  CCISTTA: { name: 'CCISTTA', changes: [], selected: new Set() },
+  PROJECT_A: { name: 'PROJECT_A', changes: [], selected: new Set() },
+  PROJECT_B: { name: 'PROJECT_B', changes: [], selected: new Set() },
   currentDiff: {
     file: '',
     type: '', // 'local' or 'cross-project'
-    sourceProject: '', // 'ADHA' or 'CCISTTA'
+    sourceProject: '', // 'PROJECT_A' or 'PROJECT_B'
     diffText: ''
   }
 };
@@ -93,46 +93,46 @@ async function fetchStatus() {
     const response = await fetch('/api/status');
     const data = await response.json();
     
-    appState.ADHA.changes = data.ADHA.changes || [];
-    appState.CCISTTA.changes = data.CCISTTA.changes || [];
+    appState.PROJECT_A.changes = data.PROJECT_A.changes || [];
+    appState.PROJECT_B.changes = data.PROJECT_B.changes || [];
     
     // Keep track of present paths
-    const newAdhaPaths = new Set(appState.ADHA.changes.map(c => c.path));
-    const newCcisttaPaths = new Set(appState.CCISTTA.changes.map(c => c.path));
+    const newAdhaPaths = new Set(appState.PROJECT_A.changes.map(c => c.path));
+    const newCcisttaPaths = new Set(appState.PROJECT_B.changes.map(c => c.path));
 
     // Keep only elements that are still modified
-    appState.ADHA.selected = new Set([...appState.ADHA.selected].filter(p => newAdhaPaths.has(p)));
-    appState.CCISTTA.selected = new Set([...appState.CCISTTA.selected].filter(p => newCcisttaPaths.has(p)));
+    appState.PROJECT_A.selected = new Set([...appState.PROJECT_A.selected].filter(p => newAdhaPaths.has(p)));
+    appState.PROJECT_B.selected = new Set([...appState.PROJECT_B.selected].filter(p => newCcisttaPaths.has(p)));
 
     // Add new changes to selected set by default
-    appState.ADHA.changes.forEach(c => {
-      if (!appState.ADHA.selected.has(c.path)) {
-        appState.ADHA.selected.add(c.path);
+    appState.PROJECT_A.changes.forEach(c => {
+      if (!appState.PROJECT_A.selected.has(c.path)) {
+        appState.PROJECT_A.selected.add(c.path);
       }
     });
-    appState.CCISTTA.changes.forEach(c => {
-      if (!appState.CCISTTA.selected.has(c.path)) {
-        appState.CCISTTA.selected.add(c.path);
+    appState.PROJECT_B.changes.forEach(c => {
+      if (!appState.PROJECT_B.selected.has(c.path)) {
+        appState.PROJECT_B.selected.add(c.path);
       }
     });
 
-    appState.ADHA.name = data.ADHA.name || 'ADHA';
-    appState.CCISTTA.name = data.CCISTTA.name || 'CCISTTA';
+    appState.PROJECT_A.name = data.PROJECT_A.name || 'Project A';
+    appState.PROJECT_B.name = data.PROJECT_B.name || 'Project B';
     
     // Update dynamically names/paths in the UI
-    document.querySelector('.card-adha h3').textContent = appState.ADHA.name;
-    document.getElementById('path-adha').textContent = data.ADHA.path;
-    document.querySelector('#panel-adha h2').textContent = `${appState.ADHA.name} Changes`;
-    document.querySelector('#sync-all-to-ccistta-btn span').textContent = `Sync All to ${appState.CCISTTA.name}`;
+    document.querySelector('.card-adha h3').textContent = appState.PROJECT_A.name;
+    document.getElementById('path-adha').textContent = data.PROJECT_A.path;
+    document.querySelector('#panel-adha h2').textContent = `${appState.PROJECT_A.name} Changes`;
+    document.querySelector('#sync-all-to-ccistta-btn span').textContent = `Sync All to ${appState.PROJECT_B.name}`;
 
-    document.querySelector('.card-ccistta h3').textContent = appState.CCISTTA.name;
-    document.getElementById('path-ccistta').textContent = data.CCISTTA.path;
-    document.querySelector('#panel-ccistta h2').textContent = `${appState.CCISTTA.name} Changes`;
-    document.querySelector('#sync-all-to-adha-btn span').textContent = `Sync All to ${appState.ADHA.name}`;
+    document.querySelector('.card-ccistta h3').textContent = appState.PROJECT_B.name;
+    document.getElementById('path-ccistta').textContent = data.PROJECT_B.path;
+    document.querySelector('#panel-ccistta h2').textContent = `${appState.PROJECT_B.name} Changes`;
+    document.querySelector('#sync-all-to-adha-btn span').textContent = `Sync All to ${appState.PROJECT_A.name}`;
 
     // Pre-fill paths f settings inputs
-    configPathA.value = data.ADHA.path;
-    configPathB.value = data.CCISTTA.path;
+    configPathA.value = data.PROJECT_A.path;
+    configPathB.value = data.PROJECT_B.path;
     
     renderLists();
     showToast('Fetched latest changes from git status.', 'info');
@@ -146,9 +146,9 @@ async function fetchStatus() {
 }
 
 function updateSyncButtonsState() {
-  // ADHA (Source) to CCISTTA (Dest)
-  const adhaSelected = appState.ADHA.selected.size;
-  const adhaTotal = appState.ADHA.changes.length;
+  // PROJECT_A (Source) to PROJECT_B (Dest)
+  const adhaSelected = appState.PROJECT_A.selected.size;
+  const adhaTotal = appState.PROJECT_A.changes.length;
   const isAdhaAll = adhaSelected === adhaTotal && adhaTotal > 0;
 
   const syncAdhaBtn = document.getElementById('sync-all-to-ccistta-btn');
@@ -169,9 +169,9 @@ function updateSyncButtonsState() {
     discardAdhaBtn.disabled = adhaSelected === 0;
   }
 
-  // CCISTTA (Source) to ADHA (Dest)
-  const ccisttaSelected = appState.CCISTTA.selected.size;
-  const ccisttaTotal = appState.CCISTTA.changes.length;
+  // PROJECT_B (Source) to PROJECT_A (Dest)
+  const ccisttaSelected = appState.PROJECT_B.selected.size;
+  const ccisttaTotal = appState.PROJECT_B.changes.length;
   const isCcisttaAll = ccisttaSelected === ccisttaTotal && ccisttaTotal > 0;
 
   const syncCcisttaBtn = document.getElementById('sync-all-to-adha-btn');
@@ -225,25 +225,25 @@ function renderLists() {
   const ccisttaQuery = searchCcistta.value.toLowerCase();
   
   // Filter changes
-  const filteredAdha = appState.ADHA.changes.filter(change => 
+  const filteredAdha = appState.PROJECT_A.changes.filter(change => 
     change.path.toLowerCase().includes(adhaQuery)
   );
   
-  const filteredCcistta = appState.CCISTTA.changes.filter(change => 
+  const filteredCcistta = appState.PROJECT_B.changes.filter(change => 
     change.path.toLowerCase().includes(ccisttaQuery)
   );
   
   // Update badges
-  countAdha.textContent = appState.ADHA.changes.length;
-  countCcistta.textContent = appState.CCISTTA.changes.length;
+  countAdha.textContent = appState.PROJECT_A.changes.length;
+  countCcistta.textContent = appState.PROJECT_B.changes.length;
   
   // Render ADHA Panel
-  renderProjectList(filteredAdha, listAdha, 'ADHA', 'CCISTTA');
+  renderProjectList(filteredAdha, listAdha, 'PROJECT_A', 'PROJECT_B');
   // Render CCISTTA Panel
-  renderProjectList(filteredCcistta, listCcistta, 'CCISTTA', 'ADHA');
+  renderProjectList(filteredCcistta, listCcistta, 'PROJECT_B', 'PROJECT_A');
   
-  updateSelectAllState('ADHA');
-  updateSelectAllState('CCISTTA');
+  updateSelectAllState('PROJECT_A');
+  updateSelectAllState('PROJECT_B');
   updateSyncButtonsState();
   
   initIcons();
@@ -272,7 +272,7 @@ function renderProjectList(changes, container, sourceProj, destProj) {
     return `
       <div class="file-item ${isSelected ? 'selected' : ''}" data-filepath="${file.path}">
         <div class="file-details">
-          <input type="checkbox" class="file-select-checkbox" data-project="${sourceProj}" data-filepath="${file.path}" ${isSelected ? 'checked' : ''} style="accent-color: ${sourceProj === 'ADHA' ? 'var(--cyan)' : 'var(--pink)'}; cursor: pointer; width: 16px; height: 16px; flex-shrink: 0; margin-right: 0.5rem; margin-top: 0.15rem;">
+          <input type="checkbox" class="file-select-checkbox" data-project="${sourceProj}" data-filepath="${file.path}" ${isSelected ? 'checked' : ''} style="accent-color: ${sourceProj === 'PROJECT_A' ? 'var(--cyan)' : 'var(--pink)'}; cursor: pointer; width: 16px; height: 16px; flex-shrink: 0; margin-right: 0.5rem; margin-top: 0.15rem;">
           <div class="${badgeClass}">${statusCode}</div>
           <div class="file-meta">
             <span class="file-path">${filename}</span>
@@ -330,7 +330,7 @@ function renderProjectList(changes, container, sourceProj, destProj) {
 }
 
 // Open Diff Modal & fetch diff content
-async function showDiff(filePath, compare = false, sourceProject = 'ADHA') {
+async function showDiff(filePath, compare = false, sourceProject = 'PROJECT_A') {
   try {
     const compareQuery = compare ? 'true' : 'false';
     const response = await fetch(`/api/diff?file=${encodeURIComponent(filePath)}&compare=${compareQuery}&sourceProject=${sourceProject}`);
@@ -352,7 +352,7 @@ async function showDiff(filePath, compare = false, sourceProject = 'ADHA') {
     diffModalFilename.textContent = filePath.split('/').pop();
     diffModalDesc.textContent = filePath;
     
-    const destProject = sourceProject === 'ADHA' ? 'CCISTTA' : 'ADHA';
+    const destProject = sourceProject === 'PROJECT_A' ? 'PROJECT_B' : 'PROJECT_A';
     const isBinary = isBinaryFile(filePath);
     
     if (!isBinary) {
@@ -373,8 +373,8 @@ async function showDiff(filePath, compare = false, sourceProject = 'ADHA') {
       modalSyncBtn.onclick = () => syncFile(filePath, sourceProject, destProject, false);
     } else {
       diffModalBadge.textContent = `${sourceProject} Git Diff`;
-      const sourceGlow = sourceProject === 'ADHA' ? 'var(--cyan-glow)' : 'var(--pink-glow)';
-      const sourceColor = sourceProject === 'ADHA' ? 'var(--cyan)' : 'var(--pink)';
+      const sourceGlow = sourceProject === 'PROJECT_A' ? 'var(--cyan-glow)' : 'var(--pink-glow)';
+      const sourceColor = sourceProject === 'PROJECT_A' ? 'var(--cyan)' : 'var(--pink)';
       diffModalBadge.style.background = sourceGlow;
       diffModalBadge.style.color = sourceColor;
       diffModalBadge.style.borderColor = sourceColor;
@@ -690,7 +690,7 @@ async function syncAllFiles(fromProj, toProj, isSmartMerge = false) {
   }
   
   const mergeJson = isSmartMerge;
-  const totalCount = fromProj === 'ADHA' ? appState.ADHA.changes.length : appState.CCISTTA.changes.length;
+  const totalCount = fromProj === 'PROJECT_A' ? appState.PROJECT_A.changes.length : appState.PROJECT_B.changes.length;
   
   let confirmMessage = `Are you sure you want to ${isSmartMerge ? 'SMART MERGE' : 'SYNC'} <strong>${count === totalCount ? 'ALL ' : ''}${count} selected files</strong> from <strong>${fromProj}</strong> to <strong>${toProj}</strong>?<br><br>`;
   if (mergeJson) {
@@ -786,14 +786,14 @@ const mergeAllToAdhaBtn = document.getElementById('merge-all-to-adha-btn');
 const discardAllAdhaBtn = document.getElementById('discard-all-adha-btn');
 const discardAllCcisttaBtn = document.getElementById('discard-all-ccistta-btn');
 
-syncAllToCcisttaBtn.addEventListener('click', () => syncAllFiles('ADHA', 'CCISTTA', false));
-syncAllToAdhaBtn.addEventListener('click', () => syncAllFiles('CCISTTA', 'ADHA', false));
+syncAllToCcisttaBtn.addEventListener('click', () => syncAllFiles('PROJECT_A', 'PROJECT_B', false));
+syncAllToAdhaBtn.addEventListener('click', () => syncAllFiles('PROJECT_B', 'PROJECT_A', false));
 
-mergeAllToCcisttaBtn.addEventListener('click', () => syncAllFiles('ADHA', 'CCISTTA', true));
-mergeAllToAdhaBtn.addEventListener('click', () => syncAllFiles('CCISTTA', 'ADHA', true));
+mergeAllToCcisttaBtn.addEventListener('click', () => syncAllFiles('PROJECT_A', 'PROJECT_B', true));
+mergeAllToAdhaBtn.addEventListener('click', () => syncAllFiles('PROJECT_B', 'PROJECT_A', true));
 
-discardAllAdhaBtn.addEventListener('click', () => discardAllFiles('ADHA'));
-discardAllCcisttaBtn.addEventListener('click', () => discardAllFiles('CCISTTA'));
+discardAllAdhaBtn.addEventListener('click', () => discardAllFiles('PROJECT_A'));
+discardAllCcisttaBtn.addEventListener('click', () => discardAllFiles('PROJECT_B'));
 
 // Settings Modal Actions
 configBtn.addEventListener('click', () => {
@@ -1007,14 +1007,14 @@ document.addEventListener('DOMContentLoaded', () => {
     selectAllAdha.addEventListener('change', (e) => {
       const isChecked = e.target.checked;
       const adhaQuery = searchAdha.value.toLowerCase();
-      const filtered = appState.ADHA.changes.filter(change => 
+      const filtered = appState.PROJECT_A.changes.filter(change => 
         change.path.toLowerCase().includes(adhaQuery)
       );
       
       if (isChecked) {
-        filtered.forEach(c => appState.ADHA.selected.add(c.path));
+        filtered.forEach(c => appState.PROJECT_A.selected.add(c.path));
       } else {
-        filtered.forEach(c => appState.ADHA.selected.delete(c.path));
+        filtered.forEach(c => appState.PROJECT_A.selected.delete(c.path));
       }
       renderLists();
     });
@@ -1025,14 +1025,14 @@ document.addEventListener('DOMContentLoaded', () => {
     selectAllCcistta.addEventListener('change', (e) => {
       const isChecked = e.target.checked;
       const ccisttaQuery = searchCcistta.value.toLowerCase();
-      const filtered = appState.CCISTTA.changes.filter(change => 
+      const filtered = appState.PROJECT_B.changes.filter(change => 
         change.path.toLowerCase().includes(ccisttaQuery)
       );
       
       if (isChecked) {
-        filtered.forEach(c => appState.CCISTTA.selected.add(c.path));
+        filtered.forEach(c => appState.PROJECT_B.selected.add(c.path));
       } else {
-        filtered.forEach(c => appState.CCISTTA.selected.delete(c.path));
+        filtered.forEach(c => appState.PROJECT_B.selected.delete(c.path));
       }
       renderLists();
     });
