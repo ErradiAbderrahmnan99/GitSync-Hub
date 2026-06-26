@@ -2,13 +2,6 @@
 
 A premium, modern web-based synchronization and comparison dashboard designed to manage local Git changes and perform selective bulk operations across two projects (`PROJECT_A` and `PROJECT_B`).
 
----
-
-## 👤 Developer
-Created and maintained by **Abderrahmane Erradi**
-
----
-
 ## ✨ Features
 
 - **Real-Time Git Status**: Scans active changes (untracked, modified, deleted) in two separate directories simultaneously.
@@ -47,8 +40,8 @@ cp .env.example .env
 Open `.env` and set the absolute paths of the two projects you want to synchronize:
 ```env
 PORT=3000
-PROJECT_A_PATH=/home/jojo/development/integral/ADHA
-PROJECT_B_PATH=/home/jojo/development/integral/CCISTTA
+PROJECT_A_PATH=/path/to/project-a
+PROJECT_B_PATH=/path/to/project-b
 ```
 
 ### 3. Launch Development Server
@@ -57,3 +50,10 @@ Start the local server using:
 npm run dev
 ```
 Open your browser and navigate to **[http://localhost:3000](http://localhost:3000)**.
+
+---
+
+## 👤 Developer
+Created and maintained by **Abderrahmane Erradi**
+
+---
