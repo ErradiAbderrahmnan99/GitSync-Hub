@@ -625,6 +625,19 @@ body {
   transform: translateX(-50%) scale(1);
 }
 
+/* Tooltip adjustments for list items to avoid overflow clipping */
+.file-actions [data-tooltip]::before {
+  bottom: auto;
+  left: auto;
+  top: 50%;
+  right: 125%;
+  transform: translateY(-50%) scale(0.9);
+}
+
+.file-actions [data-tooltip]:hover::before {
+  transform: translateY(-50%) scale(1);
+}
+
 /* Empty State / Loading States */
 .loading-state,
 .empty-state {

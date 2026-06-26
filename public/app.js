@@ -255,7 +255,7 @@ function renderProjectList(changes, container, sourceProj, destProj) {
     container.innerHTML = `
       <div class="empty-state">
         <i data-lucide="check-circle" class="empty-state-icon"></i>
-        <p>No changes found in project ${sourceProj}</p>
+        <p>No changes found in project ${appState[sourceProj].name || sourceProj}</p>
       </div>
     `;
     return;
