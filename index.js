@@ -672,6 +672,205 @@ app.post('/api/discard', (req, res) => {
   }
 });
 
+// GET list of commits for a project
+app.get('/api/commits', (req, res) => {
+  const { project } = req.query;
+  const cwd = PROJECTS[project];
+  
+  if (!cwd || !fs.existsSync(cwd)) {
+    return res.status(400).json({ error: 'Invalid project path or path does not exist' });
+  }
+  
+  try {
+    const logOutput = execSync('git log -n 25 --pretty=format:"%H|%an|%ad|%s" --date=short', { cwd, encoding: 'utf8' });
+    if (!logOutput.trim()) {
+      return res.json([]);
+    }
+    const commits = logOutput.trim().split('\n').map(line => {
+      const [hash, author, date, ...messageParts] = line.split('|');
+      const message = messageParts.join('|');
+      return { hash, author, date, message };
+    });
+    res.json(commits);
+  } catch (error) {
+    res.status(500).json({ error: `Failed to fetch commits: ${error.message}` });
+  }
+});
+
+// GET list of files changed in a commit
+app.get('/api/commit-files', (req, res) => {
+  const { project, hash } = req.query;
+  const cwd = PROJECTS[project];
+  
+  if (!cwd || !fs.existsSync(cwd)) {
+    return res.status(400).json({ error: 'Invalid project path or path does not exist' });
+  }
+  if (!hash) {
+    return res.status(400).json({ error: 'Commit hash is required' });
+  }
+  
+  try {
+    const filesOutput = execSync(`git diff-tree --no-commit-id --name-status -r ${hash}`, { cwd, encoding: 'utf8' });
+    if (!filesOutput.trim()) {
+      return res.json([]);
+    }
+    const files = filesOutput.trim().split('\n').map(line => {
+      const parts = line.split(/\s+/);
+      const code = parts[0];
+      const filePath = parts.slice(1).join(' ');
+      return { code, path: filePath };
+    });
+    res.json(files);
+  } catch (error) {
+    res.status(500).json({ error: `Failed to fetch commit files: ${error.message}` });
+  }
+});
+
+// GET diff for a specific file in a commit
+app.get('/api/commit-diff', (req, res) => {
+  const { project, hash, file } = req.query;
+  const cwd = PROJECTS[project];
+  
+  if (!cwd || !fs.existsSync(cwd)) {
+    return res.status(400).json({ error: 'Invalid project path or path does not exist' });
+  }
+  if (!hash || !file) {
+    return res.status(400).json({ error: 'Hash and file parameters are required' });
+  }
+  
+  try {
+    const diff = execSync(`git show --color=never ${hash} -- "${file}"`, { cwd, encoding: 'utf8' });
+    res.json({ diff });
+  } catch (error) {
+    res.status(500).json({ error: `Failed to get commit file diff: ${error.message}` });
+  }
+});
+
+// GET full project scan comparison (not git status-bound, respects .gitignore)
+app.get('/api/scan-compare', (req, res) => {
+  const pathA = PROJECTS.PROJECT_A;
+  const pathB = PROJECTS.PROJECT_B;
+
+  if (!pathA || !fs.existsSync(pathA) || !pathB || !fs.existsSync(pathB)) {
+    return res.status(400).json({ error: 'Both project paths must be configured and exist.' });
+  }
+
+  try {
+    const crypto = require('crypto');
+    
+    // Fetch index list with hashes
+    let outputA = '';
+    try {
+      outputA = execSync('git ls-files -s', { cwd: pathA, encoding: 'utf8', maxBuffer: 15 * 1024 * 1024 });
+    } catch (err) {
+      console.error('Error run git ls-files -s A:', err);
+    }
+
+    let outputB = '';
+    try {
+      outputB = execSync('git ls-files -s', { cwd: pathB, encoding: 'utf8', maxBuffer: 15 * 1024 * 1024 });
+    } catch (err) {
+      console.error('Error run git ls-files -s B:', err);
+    }
+
+    const parseIndex = (output) => {
+      const map = new Map();
+      const lines = output.split('\n');
+      lines.forEach(line => {
+        if (!line) return;
+        const parts = line.split(/\s+/);
+        if (parts.length < 4) return;
+        const hash = parts[1];
+        const relPath = parts.slice(3).join(' ');
+        map.set(relPath, hash);
+      });
+      return map;
+    };
+
+    const mapA = parseIndex(outputA);
+    const mapB = parseIndex(outputB);
+
+    // Fetch untracked files
+    let untrackedA = new Set();
+    try {
+      const outUntrackedA = execSync('git ls-files -o --exclude-standard', { cwd: pathA, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+      untrackedA = new Set(outUntrackedA.split('\n').map(f => f.trim()).filter(Boolean));
+    } catch (err) {}
+
+    let untrackedB = new Set();
+    try {
+      const outUntrackedB = execSync('git ls-files -o --exclude-standard', { cwd: pathB, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+      untrackedB = new Set(outUntrackedB.split('\n').map(f => f.trim()).filter(Boolean));
+    } catch (err) {}
+
+    const allFiles = new Set([...mapA.keys(), ...mapB.keys(), ...untrackedA, ...untrackedB]);
+    const differences = [];
+
+    allFiles.forEach(file => {
+      const inIndexA = mapA.has(file);
+      const inIndexB = mapB.has(file);
+      const isUntrackedA = untrackedA.has(file);
+      const isUntrackedB = untrackedB.has(file);
+
+      const existsA = inIndexA || isUntrackedA;
+      const existsB = inIndexB || isUntrackedB;
+
+      const fullPathA = path.join(pathA, file);
+      const fullPathB = path.join(pathB, file);
+
+      if (existsA && !existsB) {
+        const sizeA = fs.existsSync(fullPathA) ? fs.statSync(fullPathA).size : null;
+        differences.push({
+          path: file,
+          status: 'only_in_a',
+          sizeA,
+          sizeB: null
+        });
+      } else if (!existsA && existsB) {
+        const sizeB = fs.existsSync(fullPathB) ? fs.statSync(fullPathB).size : null;
+        differences.push({
+          path: file,
+          status: 'only_in_b',
+          sizeA: null,
+          sizeB
+        });
+      } else {
+        // Exists in both, check if different
+        let different = false;
+        if (inIndexA && inIndexB) {
+          different = mapA.get(file) !== mapB.get(file);
+        } else {
+          // One or both are untracked
+          const sizeA = fs.existsSync(fullPathA) ? fs.statSync(fullPathA).size : null;
+          const sizeB = fs.existsSync(fullPathB) ? fs.statSync(fullPathB).size : null;
+          if (sizeA !== sizeB) {
+            different = true;
+          } else {
+            const contentA = fs.existsSync(fullPathA) ? fs.readFileSync(fullPathA) : '';
+            const contentB = fs.existsSync(fullPathB) ? fs.readFileSync(fullPathB) : '';
+            different = !contentA.equals(contentB);
+          }
+        }
+
+        if (different) {
+          const sizeA = fs.existsSync(fullPathA) ? fs.statSync(fullPathA).size : null;
+          const sizeB = fs.existsSync(fullPathB) ? fs.statSync(fullPathB).size : null;
+          differences.push({
+            path: file,
+            status: 'modified',
+            sizeA,
+            sizeB
+          });
+        }
+      }
+    });
+
+    res.json(differences);
+  } catch (error) {
+    res.status(500).json({ error: `Scanner failed: ${error.message}` });
+  }
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);

@@ -5,6 +5,13 @@ A premium, modern web-based synchronization and comparison dashboard designed to
 ## ✨ Features
 
 - **Real-Time Git Status**: Scans active changes (untracked, modified, deleted) in two separate directories simultaneously.
+- **Commits History View**: Browse the 25 most recent commits for both projects, expand any commit to see the files modified, view their commit-level diffs, and sync or smart-merge historical versions of files.
+- **Full Scanner (Direct Project Comparison)**: 
+  - Directly compares the filesystem directories of both projects in under **650 milliseconds** using an optimized git index comparison.
+  - Fully respects `.gitignore` rules (excludes `node_modules`, build artifacts, etc.).
+  - Highlights files present in only one project with custom project folder badges (e.g. `Only in ADHA` or `Only in CCISTTA`).
+  - View contents of single-sided files (compared against `/dev/null`) or differing files side-by-side.
+  - Offers selective copy-overwriting, smart-merging, and full bulk folder synchronizations (`Sync All A ➔ B` / `Sync All B ➔ A`).
 - **Selective Bulk Actions**: Toggle and select files individually or in batches to perform:
   - 🔄 **Sync / Overwrite**: Copy source files directly to the destination repository.
   - 🧠 **Smart Merge**: Intelligently merge changes for text/JSON files, avoiding data losses.
@@ -50,3 +57,9 @@ Start the local server using:
 npm run dev
 ```
 Open your browser and navigate to **[http://localhost:3000](http://localhost:3000)**.
+
+---
+
+## 👤 Author
+
+Developed with ❤️ by **Abderrahmane Erradi**.

@@ -7,7 +7,8 @@ let appState = {
     type: '', // 'local' or 'cross-project'
     sourceProject: '', // 'PROJECT_A' or 'PROJECT_B'
     diffText: ''
-  }
+  },
+  scannerDiffs: []
 };
 
 const isBinaryFile = (path) => {
@@ -48,6 +49,24 @@ const configPathB = document.getElementById('config-path-b');
 
 // Toast Container
 const toastContainer = document.getElementById('toast-container');
+
+// Navigation & Views Elements
+const btnTabChanges = document.getElementById('btn-tab-changes');
+const btnTabCommits = document.getElementById('btn-tab-commits');
+const btnTabScan = document.getElementById('btn-tab-scan');
+const viewChanges = document.getElementById('view-changes');
+const viewCommits = document.getElementById('view-commits');
+const viewScan = document.getElementById('view-scan');
+const commitsListA = document.getElementById('commits-list-a');
+const commitsListB = document.getElementById('commits-list-b');
+const commitsTitleA = document.getElementById('commits-title-a');
+const commitsTitleB = document.getElementById('commits-title-b');
+const scanList = document.getElementById('scan-list');
+const countScan = document.getElementById('count-scan');
+const searchScan = document.getElementById('search-scan');
+const btnScanSyncAToB = document.getElementById('btn-scan-sync-a-to-b');
+const btnScanSyncBToA = document.getElementById('btn-scan-sync-b-to-a');
+const btnScanRefresh = document.getElementById('btn-scan-refresh');
 
 // Initialize Lucide Icons
 function initIcons() {
@@ -332,6 +351,7 @@ function renderProjectList(changes, container, sourceProj, destProj) {
 // Open Diff Modal & fetch diff content
 async function showDiff(filePath, compare = false, sourceProject = 'PROJECT_A') {
   try {
+    modalDiscardBtn.style.display = 'inline-flex';
     const compareQuery = compare ? 'true' : 'false';
     const response = await fetch(`/api/diff?file=${encodeURIComponent(filePath)}&compare=${compareQuery}&sourceProject=${sourceProject}`);
     const data = await response.json();
@@ -396,6 +416,436 @@ async function showDiff(filePath, compare = false, sourceProject = 'PROJECT_A') 
     console.error('Error fetching diff:', error);
     showToast('Failed to generate diff: ' + error.message, 'error');
   }
+}
+
+// Open Diff Modal for a historical commit & fetch diff content
+async function showCommitDiff(filePath, commitHash, sourceProject) {
+  try {
+    modalDiscardBtn.style.display = 'none'; // Hide discard changes on historical commits
+    const response = await fetch(`/api/commit-diff?file=${encodeURIComponent(filePath)}&hash=${commitHash}&project=${sourceProject}`);
+    const data = await response.json();
+    
+    if (data.error) {
+      showToast(data.error, 'error');
+      return;
+    }
+    
+    appState.currentDiff = {
+      file: filePath,
+      type: 'commit-diff',
+      sourceProject: sourceProject,
+      diffText: data.diff
+    };
+    
+    // Fill Modal
+    diffModalFilename.textContent = filePath.split('/').pop();
+    diffModalDesc.textContent = `${filePath} (Commit: ${commitHash.substring(0, 7)})`;
+    
+    const destProject = sourceProject === 'PROJECT_A' ? 'PROJECT_B' : 'PROJECT_A';
+    const isBinary = isBinaryFile(filePath);
+    
+    if (!isBinary) {
+      modalMergeBtn.style.display = 'inline-flex';
+      modalMergeBtn.onclick = () => syncFile(filePath, sourceProject, destProject, true);
+    } else {
+      modalMergeBtn.style.display = 'none';
+    }
+
+    diffModalBadge.textContent = `${sourceProject} Commit Diff`;
+    const sourceGlow = sourceProject === 'PROJECT_A' ? 'var(--cyan-glow)' : 'var(--pink-glow)';
+    const sourceColor = sourceProject === 'PROJECT_A' ? 'var(--cyan)' : 'var(--pink)';
+    diffModalBadge.style.background = sourceGlow;
+    diffModalBadge.style.color = sourceColor;
+    diffModalBadge.style.borderColor = sourceColor;
+
+    modalSyncText.textContent = `Sync to ${destProject}`;
+    modalSyncBtn.style.display = 'inline-flex';
+    modalSyncBtn.onclick = () => syncFile(filePath, sourceProject, destProject, false);
+    
+    // Render code diff with styling
+    renderDiffContent(data.diff);
+    
+    // Show Modal
+    diffModal.classList.add('active');
+    initIcons();
+  } catch (error) {
+    console.error('Error fetching commit diff:', error);
+    showToast('Failed to generate commit diff: ' + error.message, 'error');
+  }
+}
+
+// Fetch commits for both Project A and Project B
+async function fetchCommits() {
+  commitsTitleA.textContent = `${appState.PROJECT_A.name} Commits`;
+  commitsTitleB.textContent = `${appState.PROJECT_B.name} Commits`;
+
+  commitsListA.innerHTML = `
+    <div class="loading-state">
+      <i data-lucide="loader" class="spinner"></i>
+      <p>Loading commits...</p>
+    </div>
+  `;
+  commitsListB.innerHTML = `
+    <div class="loading-state">
+      <i data-lucide="loader" class="spinner"></i>
+      <p>Loading commits...</p>
+    </div>
+  `;
+  initIcons();
+
+  try {
+    const [resA, resB] = await Promise.all([
+      fetch(`/api/commits?project=PROJECT_A`),
+      fetch(`/api/commits?project=PROJECT_B`)
+    ]);
+
+    const dataA = await resA.json();
+    const dataB = await resB.json();
+
+    if (dataA.error) showToast(dataA.error, 'error');
+    if (dataB.error) showToast(dataB.error, 'error');
+
+    renderCommitList(dataA || [], commitsListA, 'PROJECT_A', 'PROJECT_B');
+    renderCommitList(dataB || [], commitsListB, 'PROJECT_B', 'PROJECT_A');
+    
+  } catch (error) {
+    console.error('Error fetching commits:', error);
+    showToast('Failed to fetch commits: ' + error.message, 'error');
+    commitsListA.innerHTML = `<div class="empty-state"><p>Error loading commits.</p></div>`;
+    commitsListB.innerHTML = `<div class="empty-state"><p>Error loading commits.</p></div>`;
+  }
+}
+
+// Render list of commits to the container
+function renderCommitList(commits, container, sourceProj, destProj) {
+  if (commits.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <i data-lucide="check-circle" class="empty-state-icon"></i>
+        <p>No commits found in project ${appState[sourceProj].name || sourceProj}</p>
+      </div>
+    `;
+    initIcons();
+    return;
+  }
+
+  container.innerHTML = '';
+  commits.forEach(commit => {
+    const item = document.createElement('div');
+    item.className = 'commit-item';
+    item.setAttribute('data-hash', commit.hash);
+    
+    const shortHash = commit.hash.substring(0, 7);
+    
+    item.innerHTML = `
+      <div class="commit-header-row">
+        <div class="commit-main-info">
+          <div class="commit-message">${escapeHtml(commit.message)}</div>
+          <div class="commit-meta-row">
+            <span class="commit-hash" title="Full Hash: ${commit.hash}">${shortHash}</span>
+            <span class="commit-date">
+              <i data-lucide="calendar"></i>
+              ${commit.date}
+            </span>
+            <span class="commit-author">
+              <i data-lucide="user"></i>
+              ${escapeHtml(commit.author)}
+            </span>
+          </div>
+        </div>
+        <i data-lucide="chevron-down" class="commit-chevron"></i>
+      </div>
+      <div class="commit-files-container" style="display: none;">
+        <div class="commit-files-title">Files Changed</div>
+        <div class="commit-files-list">
+          <div class="loading-state" style="padding: 0.5rem; font-size: 0.8rem;">
+            <i data-lucide="loader" class="spinner" style="width: 14px; height: 14px;"></i>
+            <span>Fetching changed files...</span>
+          </div>
+        </div>
+      </div>
+    `;
+
+    item.addEventListener('click', async (e) => {
+      // Prevent expanding/collapsing if clicking action buttons inside the expanded list
+      if (e.target.closest('.btn-icon') || e.target.closest('.commit-file-actions')) {
+        return;
+      }
+      
+      const filesContainer = item.querySelector('.commit-files-container');
+      const isExpanded = item.classList.contains('expanded');
+      
+      if (isExpanded) {
+        item.classList.remove('expanded');
+        filesContainer.style.display = 'none';
+      } else {
+        item.classList.add('expanded');
+        filesContainer.style.display = 'block';
+        
+        // Fetch files list if not fetched yet
+        const listDiv = filesContainer.querySelector('.commit-files-list');
+        if (listDiv.querySelector('.loading-state')) {
+          await loadCommitFiles(commit.hash, sourceProj, destProj, listDiv);
+        }
+      }
+    });
+
+    container.appendChild(item);
+  });
+  
+  initIcons();
+}
+
+// Load changed files inside an expanded commit item
+async function loadCommitFiles(hash, sourceProj, destProj, listContainer) {
+  try {
+    const response = await fetch(`/api/commit-files?project=${sourceProj}&hash=${hash}`);
+    const files = await response.json();
+    
+    if (files.error) {
+      listContainer.innerHTML = `<div style="color: var(--rose-text); font-size: 0.8rem;">${files.error}</div>`;
+      return;
+    }
+    
+    if (files.length === 0) {
+      listContainer.innerHTML = `<div style="color: var(--text-muted); font-size: 0.8rem;">No file modifications found.</div>`;
+      return;
+    }
+    
+    listContainer.innerHTML = files.map(file => {
+      const filename = file.path.split('/').pop();
+      const directory = file.path.substring(0, file.path.length - filename.length - 1) || './';
+      const statusCode = file.code || 'M';
+      const badgeClass = `badge-status badge-${statusCode.toLowerCase().replace('?', 'u')}`;
+      const isBinary = isBinaryFile(file.path);
+      
+      return `
+        <div class="commit-file-row">
+          <div class="commit-file-details">
+            <div class="${badgeClass}">${statusCode}</div>
+            <div class="file-meta" style="min-width: 0;">
+              <span class="file-path" style="font-weight: 500; font-size: 0.85rem; color: var(--text-main); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${filename}</span>
+              <span class="file-dir" style="font-size: 0.72rem; color: var(--text-muted); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${directory}</span>
+            </div>
+          </div>
+          <div class="commit-file-actions">
+            <button class="btn-icon" data-tooltip="View Diff in Commit" onclick="showCommitDiff('${file.path}', '${hash}', '${sourceProj}')" style="width: 28px; height: 28px; padding: 0;">
+              <i data-lucide="file-text" style="width: 14px; height: 14px;"></i>
+            </button>
+            <button class="btn-icon" style="color: var(--emerald-text); width: 28px; height: 28px; padding: 0;" data-tooltip="Copy to ${destProj} (Overwrite)" onclick="syncFile('${file.path}', '${sourceProj}', '${destProj}', false)">
+              <i data-lucide="arrow-right-left" style="width: 14px; height: 14px;"></i>
+            </button>
+            ${!isBinary ? `
+            <button class="btn-icon" style="color: var(--cyan); width: 28px; height: 28px; padding: 0;" data-tooltip="Smart Merge with ${destProj}" onclick="syncFile('${file.path}', '${sourceProj}', '${destProj}', true)">
+              <i data-lucide="git-merge" style="width: 14px; height: 14px;"></i>
+            </button>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+    
+    initIcons();
+  } catch (error) {
+    console.error('Error loading commit files:', error);
+    listContainer.innerHTML = `<div style="color: var(--rose-text); font-size: 0.8rem;">Failed to load files: ${error.message}</div>`;
+  }
+}
+
+// Escape HTML utility helper
+function escapeHtml(str) {
+  if (!str) return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// Scan both projects for differences (not bound to git status, respects .gitignore)
+async function scanProjects() {
+  scanList.innerHTML = `
+    <div class="loading-state">
+      <i data-lucide="loader" class="spinner"></i>
+      <p>Comparing directories, calculating file hashes...</p>
+    </div>
+  `;
+  countScan.textContent = '...';
+  initIcons();
+
+  try {
+    const response = await fetch('/api/scan-compare');
+    const data = await response.json();
+
+    if (data.error) {
+      showToast(data.error, 'error');
+      scanList.innerHTML = `<div class="empty-state"><p>Error scanning projects: ${data.error}</p></div>`;
+      return;
+    }
+
+    appState.scannerDiffs = data || [];
+    renderScannerList();
+  } catch (error) {
+    console.error('Error scanning projects:', error);
+    showToast('Failed to scan projects: ' + error.message, 'error');
+    scanList.innerHTML = `<div class="empty-state"><p>Error scanning projects.</p></div>`;
+  }
+}
+
+// Render filtered scanner differences list
+function renderScannerList() {
+  const query = searchScan.value.toLowerCase().trim();
+  const filtered = appState.scannerDiffs.filter(file => 
+    file.path.toLowerCase().includes(query)
+  );
+
+  countScan.textContent = filtered.length;
+
+  if (filtered.length === 0) {
+    scanList.innerHTML = `
+      <div class="empty-state">
+        <i data-lucide="check-circle" class="empty-state-icon"></i>
+        <p>${appState.scannerDiffs.length === 0 ? 'No differing files found between projects!' : 'No matching files found.'}</p>
+      </div>
+    `;
+    initIcons();
+    return;
+  }
+
+  scanList.innerHTML = '';
+  filtered.forEach(file => {
+    const filename = file.path.split('/').pop();
+    const directory = file.path.substring(0, file.path.length - filename.length - 1) || './';
+    const isBinary = isBinaryFile(file.path);
+
+    // Format badge and text depending on status
+    let badgeText = '';
+    let badgeClass = '';
+    let actionButtonsHtml = '';
+
+    const formatSize = (bytes) => {
+      if (bytes === null || bytes === undefined) return '';
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / 1048576).toFixed(1) + ' MB';
+    };
+
+    const sizeInfo = file.status === 'modified'
+      ? `<span style="font-size: 0.72rem; color: var(--text-muted);">Size: ${formatSize(file.sizeA)} ⇄ ${formatSize(file.sizeB)}</span>`
+      : `<span style="font-size: 0.72rem; color: var(--text-muted);">Size: ${formatSize(file.sizeA || file.sizeB)}</span>`;
+
+    if (file.status === 'only_in_a') {
+      badgeText = `Only in ${appState.PROJECT_A.name}`;
+      badgeClass = 'badge-status badge-u'; // cyan/added look
+      actionButtonsHtml = `
+        <button class="btn-icon" data-tooltip="View File Content" onclick="showDiff('${file.path}', true, 'PROJECT_A')">
+          <i data-lucide="eye"></i>
+        </button>
+        <button class="btn-icon" style="color: var(--cyan);" data-tooltip="Copy to ${appState.PROJECT_B.name}" onclick="syncFile('${file.path}', 'PROJECT_A', 'PROJECT_B', false)">
+          <i data-lucide="arrow-right"></i>
+        </button>
+      `;
+    } else if (file.status === 'only_in_b') {
+      badgeText = `Only in ${appState.PROJECT_B.name}`;
+      badgeClass = 'badge-status badge-d'; // pink/deleted look
+      actionButtonsHtml = `
+        <button class="btn-icon" data-tooltip="View File Content" onclick="showDiff('${file.path}', true, 'PROJECT_B')">
+          <i data-lucide="eye"></i>
+        </button>
+        <button class="btn-icon" style="color: var(--pink);" data-tooltip="Copy to ${appState.PROJECT_A.name}" onclick="syncFile('${file.path}', 'PROJECT_B', 'PROJECT_A', false)">
+          <i data-lucide="arrow-left"></i>
+        </button>
+      `;
+    } else {
+      badgeText = 'Differs';
+      badgeClass = 'badge-status badge-m'; // orange/modified look
+      actionButtonsHtml = `
+        <button class="btn-icon" data-tooltip="View Differences" onclick="showDiff('${file.path}', true, 'PROJECT_A')">
+          <i data-lucide="eye"></i>
+        </button>
+        <button class="btn-icon" style="color: var(--cyan);" data-tooltip="Copy to ${appState.PROJECT_B.name} (Overwrite)" onclick="syncFile('${file.path}', 'PROJECT_A', 'PROJECT_B', false)">
+          <i data-lucide="arrow-right"></i>
+        </button>
+        <button class="btn-icon" style="color: var(--pink);" data-tooltip="Copy to ${appState.PROJECT_A.name} (Overwrite)" onclick="syncFile('${file.path}', 'PROJECT_B', 'PROJECT_A', false)">
+          <i data-lucide="arrow-left"></i>
+        </button>
+        ${!isBinary ? `
+        <button class="btn-icon" style="color: var(--primary);" data-tooltip="Smart Merge (${appState.PROJECT_A.name} ⇄ ${appState.PROJECT_B.name})" onclick="syncFile('${file.path}', 'PROJECT_A', 'PROJECT_B', true)">
+          <i data-lucide="git-merge"></i>
+        </button>
+        ` : ''}
+      `;
+    }
+
+    const row = document.createElement('div');
+    row.className = 'commit-file-row';
+    row.style.padding = '0.75rem 1rem';
+    row.innerHTML = `
+      <div class="commit-file-details">
+        <div class="${badgeClass}" style="min-width: 110px; padding: 0.25rem 0.5rem; text-align: center; justify-content: center;">${badgeText}</div>
+        <div class="file-meta" style="min-width: 0;">
+          <span class="file-path" style="font-weight: 600; font-size: 0.9rem; color: var(--text-main); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${filename}</span>
+          <span class="file-dir" style="font-size: 0.75rem; color: var(--text-muted); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 0.15rem;">${directory}</span>
+          ${sizeInfo}
+        </div>
+      </div>
+      <div class="commit-file-actions">
+        ${actionButtonsHtml}
+      </div>
+    `;
+    scanList.appendChild(row);
+  });
+
+  initIcons();
+}
+
+// Bulk Sync for Scanner Tab
+async function scanSyncAll(direction) {
+  const source = direction === 'a-to-b' ? 'PROJECT_A' : 'PROJECT_B';
+  const dest = direction === 'a-to-b' ? 'PROJECT_B' : 'PROJECT_A';
+  
+  const filesToSync = appState.scannerDiffs.filter(file => {
+    if (direction === 'a-to-b') {
+      return file.status === 'only_in_a' || file.status === 'modified';
+    } else {
+      return file.status === 'only_in_b' || file.status === 'modified';
+    }
+  });
+  
+  if (filesToSync.length === 0) {
+    showToast('No files to sync.', 'info');
+    return;
+  }
+  
+  const confirmMsg = `Sync all ${filesToSync.length} files from ${appState[source].name} to ${appState[dest].name}? This will overwrite existing files in ${appState[dest].name}.`;
+  if (!confirm(confirmMsg)) return;
+  
+  showToast(`Syncing ${filesToSync.length} files...`, 'info');
+  
+  let successCount = 0;
+  let errorCount = 0;
+  
+  for (const file of filesToSync) {
+    try {
+      const response = await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file: file.path, from: source, to: dest, mergeJson: false })
+      });
+      const data = await response.json();
+      if (data.success) {
+        successCount++;
+      } else {
+        errorCount++;
+      }
+    } catch (err) {
+      errorCount++;
+    }
+  }
+  
+  showToast(`Finished syncing. Success: ${successCount}, Errors: ${errorCount}`, errorCount > 0 ? 'warning' : 'success');
+  scanProjects(); // Refresh scanning list
 }
 
 // Parse unified diff format into structured side-by-side rows
@@ -1035,6 +1485,63 @@ document.addEventListener('DOMContentLoaded', () => {
         filtered.forEach(c => appState.PROJECT_B.selected.delete(c.path));
       }
       renderLists();
+    });
+  }
+
+  // Bind tab navigation
+  if (btnTabChanges && btnTabCommits && btnTabScan) {
+    btnTabChanges.addEventListener('click', () => {
+      btnTabChanges.classList.add('active');
+      btnTabCommits.classList.remove('active');
+      btnTabScan.classList.remove('active');
+      viewChanges.style.display = 'grid';
+      viewCommits.style.display = 'none';
+      viewScan.style.display = 'none';
+    });
+
+    btnTabCommits.addEventListener('click', () => {
+      btnTabCommits.classList.add('active');
+      btnTabChanges.classList.remove('active');
+      btnTabScan.classList.remove('active');
+      viewChanges.style.display = 'none';
+      viewCommits.style.display = 'grid';
+      viewScan.style.display = 'none';
+      fetchCommits();
+    });
+
+    btnTabScan.addEventListener('click', () => {
+      btnTabScan.classList.add('active');
+      btnTabChanges.classList.remove('active');
+      btnTabCommits.classList.remove('active');
+      viewChanges.style.display = 'none';
+      viewCommits.style.display = 'none';
+      viewScan.style.display = 'grid';
+      scanProjects();
+    });
+  }
+
+  // Bind full scanner controls
+  if (searchScan) {
+    searchScan.addEventListener('input', () => {
+      renderScannerList();
+    });
+  }
+
+  if (btnScanRefresh) {
+    btnScanRefresh.addEventListener('click', () => {
+      scanProjects();
+    });
+  }
+
+  if (btnScanSyncAToB) {
+    btnScanSyncAToB.addEventListener('click', () => {
+      scanSyncAll('a-to-b');
+    });
+  }
+
+  if (btnScanSyncBToA) {
+    btnScanSyncBToA.addEventListener('click', () => {
+      scanSyncAll('b-to-a');
     });
   }
 
