@@ -157,6 +157,29 @@ app.get('/api/status', (req, res) => {
     }
   }
 
+  // Post-process changes to flag files that are identical between ADHA and CCISTTA
+  if (result.ADHA && result.CCISTTA && result.ADHA.changes && result.CCISTTA.changes) {
+    const checkIdentical = (change, sourceKey, destKey) => {
+      const sourceFile = path.join(PROJECTS[sourceKey], change.path);
+      const destFile = path.join(PROJECTS[destKey], change.path);
+
+      if (fs.existsSync(sourceFile) && fs.existsSync(destFile)) {
+        try {
+          const sourceBuf = fs.readFileSync(sourceFile);
+          const destBuf = fs.readFileSync(destFile);
+          change.isIdentical = sourceBuf.equals(destBuf);
+        } catch (e) {
+          change.isIdentical = false;
+        }
+      } else {
+        change.isIdentical = false;
+      }
+    };
+
+    result.ADHA.changes.forEach(change => checkIdentical(change, 'ADHA', 'CCISTTA'));
+    result.CCISTTA.changes.forEach(change => checkIdentical(change, 'CCISTTA', 'ADHA'));
+  }
+
   res.json(result);
 });
 

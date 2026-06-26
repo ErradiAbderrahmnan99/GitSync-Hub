@@ -283,6 +283,11 @@ function renderProjectList(changes, container, sourceProj, destProj) {
           <button class="btn-icon" data-tooltip="Git Diff (Local)" onclick="showDiff('${file.path}', false, '${sourceProj}')">
             <i data-lucide="file-text"></i>
           </button>
+          ${file.isIdentical ? `
+          <span style="font-size: 0.72rem; color: var(--emerald-text); padding: 0.25rem 0.5rem; font-weight: 600; background: rgba(16, 185, 129, 0.06); border: 1px solid rgba(16, 185, 129, 0.2); border-radius: 6px; display: inline-flex; align-items: center; gap: 0.25rem; margin-right: 0.5rem; user-select: none;">
+            <i data-lucide="check" style="width: 12px; height: 12px; stroke-width: 3;"></i> Identical to ${destProj}
+          </span>
+          ` : `
           <button class="btn-icon" data-tooltip="Compare with ${destProj}" onclick="showDiff('${file.path}', true, '${sourceProj}')">
             <i data-lucide="git-compare"></i>
           </button>
@@ -294,6 +299,7 @@ function renderProjectList(changes, container, sourceProj, destProj) {
             <i data-lucide="git-merge"></i>
           </button>
           ` : ''}
+          `}
           <button class="btn-icon" style="color: var(--rose-text)" data-tooltip="Discard changes" onclick="discardChanges('${file.path}', '${sourceProj}')">
             <i data-lucide="trash-2"></i>
           </button>
