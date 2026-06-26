@@ -1,0 +1,626 @@
+const express = require('express');
+const { exec, execSync } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+
+const isBinaryFile = (filePath) => {
+  const binaryExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.pdf', '.zip', '.tar', '.gz', '.mp3', '.mp4', '.woff', '.woff2', '.ttf', '.eot'];
+  const ext = path.extname(filePath).toLowerCase();
+  return binaryExtensions.includes(ext);
+};
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+const CONFIG_FILE = path.join(__dirname, 'config.json');
+
+// Default paths for the two projects
+let PROJECTS = {
+  ADHA: '/home/jojo/development/integral/ADHA',
+  CCISTTA: '/home/jojo/development/integral/CCISTTA'
+};
+
+// Load saved configuration if it exists
+if (fs.existsSync(CONFIG_FILE)) {
+  try {
+    const saved = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    if (saved.ADHA && saved.CCISTTA) {
+      PROJECTS = saved;
+      console.log('Loaded project paths from config.json:', PROJECTS);
+    }
+  } catch (e) {
+    console.error('Error loading config.json, using defaults:', e.message);
+  }
+}
+
+// Helper to get folder name from path
+function getProjectName(dirPath) {
+  try {
+    return path.basename(path.resolve(dirPath)) || 'Project';
+  } catch (e) {
+    return 'Project';
+  }
+}
+
+// Helper to check if a directory is a Git repo
+function isGitRepo(dirPath) {
+  try {
+    execSync('git rev-parse --is-inside-work-tree', { cwd: dirPath, stdio: 'ignore' });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Parse git status porcelain format
+function parseGitStatus(output) {
+  if (!output.trim()) return [];
+  return output.split('\n').filter(line => line.trim()).map(line => {
+    // Format is "XY PATH" or "XY \"PATH\""
+    const statusPart = line.substring(0, 2);
+    let filePath = line.substring(3).trim();
+    
+    // Remove quotes if present
+    if (filePath.startsWith('"') && filePath.endsWith('"')) {
+      filePath = filePath.substring(1, filePath.length - 1);
+    }
+    
+    // Decode octal escape sequences if Git escaped them (common for non-ASCII)
+    filePath = filePath.replace(/\\(\d{3})/g, (match, octal) => {
+      return String.fromCharCode(parseInt(octal, 8));
+    });
+
+    const indexStatus = statusPart[0];
+    const workTreeStatus = statusPart[1];
+
+    let statusText = 'Modified';
+    let statusCode = 'M';
+    
+    if (indexStatus === 'A' || workTreeStatus === 'A') {
+      statusText = 'Added';
+      statusCode = 'A';
+    } else if (indexStatus === 'D' || workTreeStatus === 'D') {
+      statusText = 'Deleted';
+      statusCode = 'D';
+    } else if (indexStatus === '?' || workTreeStatus === '?') {
+      statusText = 'Untracked';
+      statusCode = '??';
+    } else if (indexStatus === 'R' || workTreeStatus === 'R') {
+      statusText = 'Renamed';
+      statusCode = 'R';
+    }
+
+    return {
+      path: filePath,
+      status: statusText,
+      code: statusCode,
+      rawStatus: statusPart
+    };
+  });
+}
+
+// GET status of both projects
+app.get('/api/status', (req, res) => {
+  const result = {};
+  console.log(`[API] Checking git status for projects...`);
+
+  for (const [key, dirPath] of Object.entries(PROJECTS)) {
+    const projName = getProjectName(dirPath);
+    if (!fs.existsSync(dirPath)) {
+      result[key] = {
+        name: projName,
+        path: dirPath,
+        exists: false,
+        error: 'Directory does not exist',
+        changes: []
+      };
+      continue;
+    }
+
+    const isGit = isGitRepo(dirPath);
+    if (!isGit) {
+      result[key] = {
+        name: projName,
+        path: dirPath,
+        exists: true,
+        isGit: false,
+        error: 'Not a git repository',
+        changes: []
+      };
+      continue;
+    }
+
+    try {
+      // -u flag shows untracked files individually
+      const statusOutput = execSync('git status --porcelain -u', { cwd: dirPath, encoding: 'utf8' });
+      const changes = parseGitStatus(statusOutput);
+      result[key] = {
+        name: projName,
+        path: dirPath,
+        exists: true,
+        isGit: true,
+        changes: changes
+      };
+    } catch (error) {
+      result[key] = {
+        name: projName,
+        path: dirPath,
+        exists: true,
+        isGit: true,
+        error: `Failed to run git status: ${error.message}`,
+        changes: []
+      };
+    }
+  }
+
+  res.json(result);
+});
+
+// GET configuration paths
+app.get('/api/config', (req, res) => {
+  res.json(PROJECTS);
+});
+
+// POST save configuration paths
+app.post('/api/config', (req, res) => {
+  const { pathA, pathB } = req.body;
+  console.log(`[API] Updating paths: A=${pathA}, B=${pathB}`);
+
+  if (!pathA || !pathB) {
+    return res.status(400).json({ error: 'Both project paths are required.' });
+  }
+
+  const resolvedA = path.resolve(pathA.trim());
+  const resolvedB = path.resolve(pathB.trim());
+
+  if (!fs.existsSync(resolvedA)) {
+    return res.status(400).json({ error: `Path A does not exist: ${pathA}` });
+  }
+  if (!fs.existsSync(resolvedB)) {
+    return res.status(400).json({ error: `Path B does not exist: ${pathB}` });
+  }
+
+  PROJECTS.ADHA = resolvedA;
+  PROJECTS.CCISTTA = resolvedB;
+
+  try {
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(PROJECTS, null, 2), 'utf8');
+    res.json({
+      success: true,
+      message: 'Configuration saved successfully.',
+      config: PROJECTS
+    });
+  } catch (error) {
+    res.status(500).json({ error: `Failed to save configuration: ${error.message}` });
+  }
+});
+
+// GET browse directory contents for folder selector
+app.get('/api/browse-dir', (req, res) => {
+  let currentPath = req.query.path || process.env.HOME || '/';
+  currentPath = path.resolve(currentPath);
+  console.log(`[API] Browsing directory: ${currentPath}`);
+
+  try {
+    if (!fs.existsSync(currentPath)) {
+      currentPath = process.env.HOME || '/';
+    }
+
+    const stats = fs.statSync(currentPath);
+    if (!stats.isDirectory()) {
+      currentPath = path.dirname(currentPath);
+    }
+
+    const items = fs.readdirSync(currentPath, { withFileTypes: true });
+    
+    // Filter directories only
+    const directories = items
+      .filter(item => {
+        try {
+          if (item.name.startsWith('.') && item.name !== '.git') return false;
+          return item.isDirectory() || item.isSymbolicLink();
+        } catch (e) {
+          return false;
+        }
+      })
+      .map(item => item.name)
+      .sort((a, b) => a.localeCompare(b));
+
+    const parent = path.dirname(currentPath);
+
+    res.json({
+      currentPath,
+      parent: parent === currentPath ? null : parent,
+      directories
+    });
+  } catch (error) {
+    console.error(`[API] Browse directory error: ${error.message}`);
+    res.status(500).json({ error: `Failed to read directory: ${error.message}` });
+  }
+});
+
+// GET file diff or content
+app.get('/api/diff', (req, res) => {
+  const { file, compare, sourceProject } = req.query;
+  console.log(`[API] Fetching diff for: ${file} (compare=${compare}, source=${sourceProject})`);
+
+  if (!file) {
+    return res.status(400).json({ error: 'File parameter is required' });
+  }
+
+  const projA = PROJECTS.ADHA;
+  const projB = PROJECTS.CCISTTA;
+
+  const fileA = path.join(projA, file);
+  const fileB = path.join(projB, file);
+
+  if (compare === 'true') {
+    // Cross-project comparison
+    const existsA = fs.existsSync(fileA);
+    const existsB = fs.existsSync(fileB);
+
+    if (!existsA && !existsB) {
+      return res.status(404).json({ error: 'File does not exist in either project' });
+    }
+
+    const pathA = existsA ? fileA : '/dev/null';
+    const pathB = existsB ? fileB : '/dev/null';
+
+    try {
+      // git diff --no-index returns exit code 1 if differences are found, which causes execSync to throw.
+      // We capture stdout from the error object if it throws.
+      const diff = execSync(`git diff --no-index --color=never "${pathA}" "${pathB}"`, { encoding: 'utf8' });
+      res.json({ diff, type: 'cross-project' });
+    } catch (error) {
+      if (error.status === 1) {
+        res.json({ diff: error.stdout, type: 'cross-project' });
+      } else {
+        res.status(500).json({ error: `Diff error: ${error.message}` });
+      }
+    }
+  } else {
+    // Local Git diff against HEAD
+    const activeProject = sourceProject || 'ADHA';
+    const cwd = PROJECTS[activeProject];
+
+    if (!cwd) {
+      return res.status(400).json({ error: 'Invalid source project' });
+    }
+
+    const filePath = path.join(cwd, file);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: `File does not exist in project ${activeProject}` });
+    }
+
+    try {
+      let diff = execSync(`git diff --color=never "${file}"`, { cwd, encoding: 'utf8' });
+      
+      // If diff is empty, it could be an untracked file. Let's return the content of the file.
+      if (!diff.trim()) {
+        const isUntracked = execSync(`git status --porcelain "${file}"`, { cwd, encoding: 'utf8' }).includes('??');
+        if (isUntracked) {
+          const content = fs.readFileSync(filePath, 'utf8');
+          // Format as a mock diff (all lines added)
+          diff = `--- /dev/null\n+++ b/${file}\n@@ -0,0 +1,${content.split('\n').length} @@\n` + 
+                 content.split('\n').map(line => '+' + line).join('\n');
+        } else {
+          diff = 'No local changes (file is staged or identical to HEAD)';
+        }
+      }
+
+      res.json({ diff, type: 'local' });
+    } catch (error) {
+      res.status(500).json({ error: `Git diff error: ${error.message}` });
+    }
+  }
+});
+
+// Helper to deep-merge JSON objects, only adding keys missing in the target
+function mergeJsonObjects(source, target) {
+  const merged = { ...target };
+  for (const [key, value] of Object.entries(source)) {
+    if (key in merged) {
+      if (typeof value === 'object' && value !== null && typeof merged[key] === 'object' && merged[key] !== null) {
+        merged[key] = mergeJsonObjects(value, merged[key]);
+      }
+    } else {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
+// Helper to perform a 3-way merge on text files using git merge-file
+function performGitMergeFile(sourceFile, destFile, file, from, to, res) {
+  const tempBaseFile = path.join(os.tmpdir(), `base-${Date.now()}-${path.basename(file)}`);
+  try {
+    fs.writeFileSync(tempBaseFile, '', 'utf8'); // Empty base file for 3-way merge
+    
+    // git merge-file <current-file> <base-file> <other-file>
+    execSync(`git merge-file "${destFile}" "${tempBaseFile}" "${sourceFile}"`);
+    
+    console.log(`[API] SUCCESS: Merged ${file} from ${from} to ${to} (No conflicts)`);
+    return res.json({
+      success: true,
+      message: `Successfully merged changes in ${file} from ${from} to ${to} (no conflicts).`
+    });
+  } catch (error) {
+    // If exit code is non-zero, it means there are conflicts, but the file is still written with conflict markers!
+    console.log(`[API] SUCCESS: Merged ${file} from ${from} to ${to} with conflicts`);
+    return res.json({
+      success: true,
+      message: `Merged changes in ${file} from ${from} to ${to} with conflicts. Please check file for conflict markers.`
+    });
+  } finally {
+    if (fs.existsSync(tempBaseFile)) {
+      fs.unlinkSync(tempBaseFile);
+    }
+  }
+}
+
+// POST sync/copy file from source to target
+app.post('/api/sync', (req, res) => {
+  const { file, from, to, mergeJson } = req.body;
+  console.log(`[API] Syncing file: ${file} from ${from} to ${to}... (mergeJson=${!!mergeJson})`);
+
+  if (!file || !from || !to) {
+    return res.status(400).json({ error: 'Missing required parameters: file, from, to' });
+  }
+
+  const sourceDir = PROJECTS[from];
+  const destDir = PROJECTS[to];
+
+  if (!sourceDir || !destDir) {
+    return res.status(400).json({ error: 'Invalid source or destination project' });
+  }
+
+  const sourceFile = path.join(sourceDir, file);
+  const destFile = path.join(destDir, file);
+
+  if (!fs.existsSync(sourceFile)) {
+    return res.status(404).json({ error: `Source file does not exist: ${sourceFile}` });
+  }
+
+  try {
+    // Create destination directories if they don't exist
+    const destFolder = path.dirname(destFile);
+    if (!fs.existsSync(destFolder)) {
+      fs.mkdirSync(destFolder, { recursive: true });
+    }
+
+    // If mergeJson is true, perform smart merge
+    if (mergeJson && fs.existsSync(destFile)) {
+      if (isBinaryFile(file)) {
+        // Fall back to copy for binary files
+        fs.copyFileSync(sourceFile, destFile);
+      } else if (file.endsWith('.json')) {
+        try {
+          const sourceData = JSON.parse(fs.readFileSync(sourceFile, 'utf8'));
+          const destData = JSON.parse(fs.readFileSync(destFile, 'utf8'));
+          const mergedData = mergeJsonObjects(sourceData, destData);
+          
+          fs.writeFileSync(destFile, JSON.stringify(mergedData, null, 2), 'utf8');
+          console.log(`[API] SUCCESS: Merged JSON keys in ${file} from ${from} to ${to}`);
+          return res.json({
+            success: true,
+            message: `Successfully merged missing keys in ${file} from ${from} to ${to}.`
+          });
+        } catch (jsonErr) {
+          console.error(`[API] JSON parse error in ${file}, falling back to git merge-file: ${jsonErr.message}`);
+          return performGitMergeFile(sourceFile, destFile, file, from, to, res);
+        }
+      } else {
+        return performGitMergeFile(sourceFile, destFile, file, from, to, res);
+      }
+    }
+
+    // Copy file (replaces if exists)
+    fs.copyFileSync(sourceFile, destFile);
+    console.log(`[API] SUCCESS: Copied ${file} from ${from} to ${to}`);
+
+    res.json({ 
+      success: true, 
+      message: `Successfully copied ${file} from ${from} to ${to}.` 
+    });
+  } catch (error) {
+    console.error(`[API] ERROR copying file: ${error.message}`);
+    res.status(500).json({ error: `Failed to copy file: ${error.message}` });
+  }
+});
+
+// POST sync/copy ALL or SELECTED changed files from source to target
+app.post('/api/sync-all', (req, res) => {
+  const { from, to, mergeJson, files } = req.body;
+  console.log(`[API] Bulk sync requested: from ${from} to ${to}... (mergeJson=${!!mergeJson}, selectedCount=${files ? files.length : 'all'})`);
+
+  if (!from || !to) {
+    return res.status(400).json({ error: 'Missing required parameters: from, to' });
+  }
+
+  const sourceDir = PROJECTS[from];
+  const destDir = PROJECTS[to];
+
+  if (!sourceDir || !destDir) {
+    return res.status(400).json({ error: 'Invalid source or destination project' });
+  }
+
+  try {
+    let filesToSync = [];
+    if (files && Array.isArray(files)) {
+      filesToSync = files;
+    } else {
+      // Fallback: Get all changed files if no array specified
+      const statusOutput = execSync('git status --porcelain -u', { cwd: sourceDir, encoding: 'utf8' });
+      const changes = parseGitStatus(statusOutput);
+      filesToSync = changes.map(c => c.path);
+    }
+
+    if (filesToSync.length === 0) {
+      return res.json({ success: true, message: `No files to sync.` });
+    }
+
+    const syncedFiles = [];
+    const failedFiles = [];
+
+    // 2. Copy each file
+    for (const file of filesToSync) {
+      const sourceFile = path.join(sourceDir, file);
+      const destFile = path.join(destDir, file);
+
+      try {
+        const destFolder = path.dirname(destFile);
+        if (!fs.existsSync(destFolder)) {
+          fs.mkdirSync(destFolder, { recursive: true });
+        }
+
+        // If mergeJson is enabled, perform smart merge
+        if (mergeJson && fs.existsSync(destFile)) {
+          if (isBinaryFile(file)) {
+            fs.copyFileSync(sourceFile, destFile);
+            syncedFiles.push(file);
+            continue;
+          } else if (file.endsWith('.json')) {
+            try {
+              const sourceData = JSON.parse(fs.readFileSync(sourceFile, 'utf8'));
+              const destData = JSON.parse(fs.readFileSync(destFile, 'utf8'));
+              const mergedData = mergeJsonObjects(sourceData, destData);
+              fs.writeFileSync(destFile, JSON.stringify(mergedData, null, 2), 'utf8');
+              syncedFiles.push(`${file} (merged JSON)`);
+              continue;
+            } catch (jsonErr) {
+              console.error(`[API] JSON merge failed in bulk sync for ${file}, trying git merge: ${jsonErr.message}`);
+            }
+          }
+
+          // Perform git merge-file for text files
+          const tempBaseFile = path.join(os.tmpdir(), `base-${Date.now()}-${path.basename(file)}`);
+          try {
+            fs.writeFileSync(tempBaseFile, '', 'utf8');
+            execSync(`git merge-file "${destFile}" "${tempBaseFile}" "${sourceFile}"`);
+            syncedFiles.push(`${file} (merged changes)`);
+            continue;
+          } catch (mergeErr) {
+            // Non-zero exit code means conflicts exist, but file contains conflict markers
+            syncedFiles.push(`${file} (merged with conflicts)`);
+            continue;
+          } finally {
+            if (fs.existsSync(tempBaseFile)) {
+              fs.unlinkSync(tempBaseFile);
+            }
+          }
+        }
+
+        fs.copyFileSync(sourceFile, destFile);
+        syncedFiles.push(file);
+      } catch (err) {
+        console.error(`[API] Failed to copy ${file}: ${err.message}`);
+        failedFiles.push({ file, error: err.message });
+      }
+    }
+
+    console.log(`[API] SUCCESS: Bulk sync completed. Synced ${syncedFiles.length} files. Failed ${failedFiles.length} files.`);
+
+    res.json({
+      success: true,
+      message: `Successfully synchronized ${syncedFiles.length} files from ${from} to ${to}.`,
+      synced: syncedFiles,
+      failed: failedFiles
+    });
+  } catch (error) {
+    console.error(`[API] Bulk sync error: ${error.message}`);
+    res.status(500).json({ error: `Failed to perform bulk sync: ${error.message}` });
+  }
+});
+
+// POST discard local changes in bulk for selected files
+app.post('/api/discard-all', (req, res) => {
+  const { project, files } = req.body;
+
+  if (!project || !files || !Array.isArray(files)) {
+    return res.status(400).json({ error: 'Missing or invalid parameters: project, files' });
+  }
+
+  const cwd = PROJECTS[project];
+  if (!cwd) {
+    return res.status(400).json({ error: 'Invalid project' });
+  }
+
+  try {
+    const discarded = [];
+    const failed = [];
+
+    for (const file of files) {
+      try {
+        const status = execSync(`git status --porcelain "${file}"`, { cwd, encoding: 'utf8' }).trim();
+        
+        if (status.startsWith('??')) {
+          const filePath = path.join(cwd, file);
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+          }
+        } else {
+          execSync(`git checkout HEAD -- "${file}"`, { cwd, stdio: 'ignore' });
+          execSync(`git clean -fd -- "${file}"`, { cwd, stdio: 'ignore' });
+        }
+        discarded.push(file);
+      } catch (err) {
+        console.error(`[API] Discard failed for ${file}: ${err.message}`);
+        failed.push({ file, error: err.message });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Successfully discarded changes in ${discarded.length} files in ${project}.`,
+      discarded,
+      failed
+    });
+  } catch (error) {
+    console.error(`[API] Bulk discard error: ${error.message}`);
+    res.status(500).json({ error: `Failed to perform bulk discard: ${error.message}` });
+  }
+});
+
+// POST discard local changes in a project (using git checkout/clean)
+app.post('/api/discard', (req, res) => {
+  const { file, project } = req.body;
+
+  if (!file || !project) {
+    return res.status(400).json({ error: 'Missing required parameters: file, project' });
+  }
+
+  const cwd = PROJECTS[project];
+  if (!cwd) {
+    return res.status(400).json({ error: 'Invalid project' });
+  }
+
+  try {
+    // Check status first to see if it's untracked or modified
+    const status = execSync(`git status --porcelain "${file}"`, { cwd, encoding: 'utf8' }).trim();
+    
+    if (status.startsWith('??')) {
+      // Untracked file -> delete it
+      const filePath = path.join(cwd, file);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } else {
+      // Modified or index added -> checkout/clean
+      execSync(`git checkout HEAD -- "${file}"`, { cwd, stdio: 'ignore' });
+      execSync(`git clean -fd -- "${file}"`, { cwd, stdio: 'ignore' });
+    }
+
+    res.json({ success: true, message: `Discarded changes in ${file} for project ${project}` });
+  } catch (error) {
+    res.status(500).json({ error: `Failed to discard changes: ${error.message}` });
+  }
+});
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`Server running at http://localhost:${PORT}`);
+});
