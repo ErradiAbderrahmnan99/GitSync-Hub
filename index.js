@@ -41,8 +41,8 @@ const CONFIG_FILE = path.join(__dirname, 'config.json');
 
 // Default paths for the two projects
 let PROJECTS = {
-  PROJECT_A: process.env.PROJECT_A_PATH || '/home/jojo/development/integral/ADHA',
-  PROJECT_B: process.env.PROJECT_B_PATH || '/home/jojo/development/integral/CCISTTA'
+  PROJECT_A: process.env.PROJECT_A_PATH || '',
+  PROJECT_B: process.env.PROJECT_B_PATH || ''
 };
 
 // Load saved configuration if it exists
@@ -58,7 +58,8 @@ if (fs.existsSync(CONFIG_FILE)) {
         PROJECT_A: saved.ADHA,
         PROJECT_B: saved.CCISTTA
       };
-      console.log('Migrated legacy project paths from config.json:', PROJECTS);
+      fs.writeFileSync(CONFIG_FILE, JSON.stringify(PROJECTS, null, 2), 'utf8');
+      console.log('Migrated legacy project paths from config.json and saved:', PROJECTS);
     }
   } catch (e) {
     console.error('Error loading config.json, using defaults:', e.message);

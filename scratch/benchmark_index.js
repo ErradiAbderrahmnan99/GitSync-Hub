@@ -2,8 +2,20 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
-const pathA = '/home/jojo/development/integral/ADHA';
-const pathB = '/home/jojo/development/integral/CCISTTA';
+// Load saved configuration dynamically
+const configPath = path.join(__dirname, '..', 'config.json');
+let pathA = '';
+let pathB = '';
+if (fs.existsSync(configPath)) {
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  pathA = config.PROJECT_A || config.ADHA || '';
+  pathB = config.PROJECT_B || config.CCISTTA || '';
+}
+
+if (!pathA || !pathB) {
+  console.error('Error: Project paths are not configured in config.json!');
+  process.exit(1);
+}
 
 console.time('git ls-files -s A');
 const outputA = execSync('git ls-files -s', { cwd: pathA, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
