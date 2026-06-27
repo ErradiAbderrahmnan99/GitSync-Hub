@@ -8,7 +8,8 @@ let appState = {
     sourceProject: '', // 'PROJECT_A' or 'PROJECT_B'
     diffText: ''
   },
-  scannerDiffs: []
+  scannerDiffs: [],
+  selectedCommitFiles: {}
 };
 
 const isBinaryFile = (path) => {
@@ -556,7 +557,21 @@ function renderCommitList(commits, container, sourceProj, destProj) {
         <i data-lucide="chevron-down" class="commit-chevron"></i>
       </div>
       <div class="commit-files-container" style="display: none;">
-        <div class="commit-files-title">Files Changed</div>
+        <div class="commit-files-header-bar" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <input type="checkbox" class="commit-select-all-checkbox" data-commit="${commit.hash}" onchange="toggleSelectAllCommitFiles('${commit.hash}', this.checked)" onclick="event.stopPropagation()" style="width: 14px; height: 14px; cursor: pointer; accent-color: var(--primary);">
+            <div class="commit-files-title" style="margin: 0; font-size: 0.8rem; font-weight: 600; color: var(--text-main);">Files Changed</div>
+          </div>
+          <div class="commit-bulk-actions" id="bulk-actions-${commit.hash}" style="display: none; gap: 0.5rem; align-items: center;">
+            <span class="selected-count" style="font-size: 0.72rem; color: var(--text-muted);">0 selected</span>
+            <button class="btn btn-outline" style="font-size: 0.7rem; padding: 0.25rem 0.5rem; height: auto; gap: 0.2rem; color: var(--cyan); border-color: rgba(6, 182, 212, 0.25); background: rgba(6, 182, 212, 0.04);" onclick="bulkSyncCommitFiles('${commit.hash}', '${sourceProj}', '${destProj}', false)">
+              <span>Sync Selected</span>
+            </button>
+            <button class="btn btn-outline" style="font-size: 0.7rem; padding: 0.25rem 0.5rem; height: auto; gap: 0.2rem; color: var(--primary); border-color: rgba(99, 102, 241, 0.25); background: rgba(99, 102, 241, 0.04);" onclick="bulkSyncCommitFiles('${commit.hash}', '${sourceProj}', '${destProj}', true)">
+              <span>Smart Merge</span>
+            </button>
+          </div>
+        </div>
         <div class="commit-files-list">
           <div class="loading-state" style="padding: 0.5rem; font-size: 0.8rem;">
             <i data-lucide="loader" class="spinner" style="width: 14px; height: 14px;"></i>
@@ -566,12 +581,8 @@ function renderCommitList(commits, container, sourceProj, destProj) {
       </div>
     `;
 
-    item.addEventListener('click', async (e) => {
-      // Prevent expanding/collapsing if clicking action buttons inside the expanded list
-      if (e.target.closest('.btn-icon') || e.target.closest('.commit-file-actions')) {
-        return;
-      }
-      
+    const headerRow = item.querySelector('.commit-header-row');
+    headerRow.addEventListener('click', async () => {
       const filesContainer = item.querySelector('.commit-files-container');
       const isExpanded = item.classList.contains('expanded');
       
@@ -618,17 +629,19 @@ async function loadCommitFiles(hash, sourceProj, destProj, listContainer) {
       const statusCode = file.code || 'M';
       const badgeClass = `badge-status badge-${statusCode.toLowerCase().replace('?', 'u')}`;
       const isBinary = isBinaryFile(file.path);
+      const isChecked = appState.selectedCommitFiles[hash] && appState.selectedCommitFiles[hash].has(file.path) ? 'checked' : '';
       
       return `
-        <div class="commit-file-row">
-          <div class="commit-file-details">
-            <div class="${badgeClass}">${statusCode}</div>
-            <div class="file-meta" style="min-width: 0;">
+        <div class="commit-file-row" style="display: flex; align-items: center; padding: 0.5rem 0.75rem;">
+          <input type="checkbox" class="commit-file-checkbox" data-path="${file.path}" data-commit="${hash}" ${isChecked} onchange="toggleCommitFileSelection('${hash}', '${file.path}', this.checked)" onclick="event.stopPropagation()" style="margin-right: 0.75rem; width: 14px; height: 14px; cursor: pointer; accent-color: var(--primary);">
+          <div class="commit-file-details" style="flex: 1; display: flex; align-items: center; gap: 0.75rem; min-width: 0;">
+            <div class="${badgeClass}" style="min-width: 24px; text-align: center;">${statusCode}</div>
+            <div class="file-meta" style="min-width: 0; flex: 1;">
               <span class="file-path" style="font-weight: 500; font-size: 0.85rem; color: var(--text-main); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${filename}</span>
               <span class="file-dir" style="font-size: 0.72rem; color: var(--text-muted); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${directory}</span>
             </div>
           </div>
-          <div class="commit-file-actions">
+          <div class="commit-file-actions" style="margin-left: auto; display: flex; gap: 0.25rem;">
             <button class="btn-icon" data-tooltip="View Diff in Commit" onclick="showCommitDiff('${file.path}', '${hash}', '${sourceProj}')" style="width: 28px; height: 28px; padding: 0;">
               <i data-lucide="file-text" style="width: 14px; height: 14px;"></i>
             </button>
@@ -645,11 +658,154 @@ async function loadCommitFiles(hash, sourceProj, destProj, listContainer) {
       `;
     }).join('');
     
+    // Auto-update select all checkbox state based on loaded selections
+    const selectAllCb = document.querySelector(`input.commit-select-all-checkbox[data-commit="${hash}"]`);
+    if (selectAllCb) {
+      const checkboxes = listContainer.querySelectorAll('input.commit-file-checkbox');
+      const allChecked = checkboxes.length > 0 && Array.from(checkboxes).every(cb => cb.checked);
+      selectAllCb.checked = allChecked;
+    }
+    
     initIcons();
   } catch (error) {
     console.error('Error loading commit files:', error);
     listContainer.innerHTML = `<div style="color: var(--rose-text); font-size: 0.8rem;">Failed to load files: ${error.message}</div>`;
   }
+}
+
+// Toggle file selection inside a commit
+function toggleCommitFileSelection(hash, filePath, isChecked) {
+  if (!appState.selectedCommitFiles[hash]) {
+    appState.selectedCommitFiles[hash] = new Set();
+  }
+  
+  if (isChecked) {
+    appState.selectedCommitFiles[hash].add(filePath);
+  } else {
+    appState.selectedCommitFiles[hash].delete(filePath);
+  }
+  
+  // Update "Select All" checkbox state
+  const selectAllCb = document.querySelector(`input.commit-select-all-checkbox[data-commit="${hash}"]`);
+  if (selectAllCb) {
+    const checkboxes = document.querySelectorAll(`input.commit-file-checkbox[data-commit="${hash}"]`);
+    const allChecked = checkboxes.length > 0 && Array.from(checkboxes).every(cb => cb.checked);
+    selectAllCb.checked = allChecked;
+  }
+  
+  updateCommitBulkActionsUI(hash);
+}
+
+// Toggle select all files inside a commit
+function toggleSelectAllCommitFiles(hash, isChecked) {
+  if (!appState.selectedCommitFiles[hash]) {
+    appState.selectedCommitFiles[hash] = new Set();
+  }
+  
+  const checkboxes = document.querySelectorAll(`input.commit-file-checkbox[data-commit="${hash}"]`);
+  checkboxes.forEach(cb => {
+    cb.checked = isChecked;
+    const filePath = cb.getAttribute('data-path');
+    if (isChecked) {
+      appState.selectedCommitFiles[hash].add(filePath);
+    } else {
+      appState.selectedCommitFiles[hash].delete(filePath);
+    }
+  });
+  
+  updateCommitBulkActionsUI(hash);
+}
+
+// Update the bulk action buttons display for a commit
+function updateCommitBulkActionsUI(hash) {
+  const bulkDiv = document.getElementById(`bulk-actions-${hash}`);
+  if (!bulkDiv) return;
+  
+  const selectedSet = appState.selectedCommitFiles[hash];
+  const count = selectedSet ? selectedSet.size : 0;
+  
+  if (count > 0) {
+    bulkDiv.style.display = 'flex';
+    const countSpan = bulkDiv.querySelector('.selected-count');
+    if (countSpan) {
+      countSpan.textContent = `${count} selected`;
+    }
+  } else {
+    bulkDiv.style.display = 'none';
+  }
+}
+
+// Bulk sync/merge selected files from a commit
+async function bulkSyncCommitFiles(hash, sourceProj, destProj, isMerge) {
+  const selectedSet = appState.selectedCommitFiles[hash];
+  if (!selectedSet || selectedSet.size === 0) return;
+  
+  const filesToSync = Array.from(selectedSet);
+  const actionName = isMerge ? 'Smart Merge' : 'Copy';
+  const sourceName = appState[sourceProj].name;
+  const destName = appState[destProj].name;
+  const confirmMsg = `${actionName} all ${filesToSync.length} selected files from ${sourceName} to ${destName}?`;
+  
+  if (!confirm(confirmMsg)) return;
+  
+  const bulkDiv = document.getElementById(`bulk-actions-${hash}`);
+  if (bulkDiv) {
+    bulkDiv.style.pointerEvents = 'none';
+    bulkDiv.style.opacity = '0.5';
+  }
+  
+  let successCount = 0;
+  let failCount = 0;
+  
+  // Run synchronization operations sequentially
+  for (const filePath of filesToSync) {
+    try {
+      const response = await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file: filePath,
+          source: sourceProj,
+          dest: destProj,
+          merge: isMerge
+        })
+      });
+      const result = await response.json();
+      if (result.success) {
+        successCount++;
+      } else {
+        failCount++;
+      }
+    } catch (err) {
+      failCount++;
+    }
+  }
+  
+  if (bulkDiv) {
+    bulkDiv.style.pointerEvents = 'auto';
+    bulkDiv.style.opacity = '1';
+  }
+  
+  if (successCount > 0) {
+    showToast(`Successfully synced ${successCount} file(s) to ${destName}`, 'success');
+  }
+  if (failCount > 0) {
+    showToast(`Failed to sync ${failCount} file(s)`, 'error');
+  }
+  
+  // Clear selection after sync
+  selectedSet.clear();
+  updateCommitBulkActionsUI(hash);
+  
+  // Uncheck all checkboxes for this commit
+  const checkboxes = document.querySelectorAll(`input.commit-file-checkbox[data-commit="${hash}"]`);
+  checkboxes.forEach(cb => cb.checked = false);
+  
+  const selectAllCb = document.querySelector(`input.commit-select-all-checkbox[data-commit="${hash}"]`);
+  if (selectAllCb) selectAllCb.checked = false;
+  
+  // Trigger general statuses update
+  fetchStatus();
 }
 
 // Escape HTML utility helper
