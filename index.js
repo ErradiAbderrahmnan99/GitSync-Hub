@@ -719,7 +719,30 @@ app.get('/api/commit-files', (req, res) => {
       const parts = line.split(/\s+/);
       const code = parts[0];
       const filePath = parts.slice(1).join(' ');
-      return { code, path: filePath };
+      
+      let isIdentical = false;
+      const destProject = project === 'PROJECT_A' ? 'PROJECT_B' : 'PROJECT_A';
+      const destCwd = PROJECTS[destProject];
+      
+      if (destCwd && fs.existsSync(destCwd)) {
+        const destFilePath = path.join(destCwd, filePath);
+        if (code === 'D') {
+          // Deleted in commit: identical if it also does not exist in destination
+          isIdentical = !fs.existsSync(destFilePath);
+        } else if (fs.existsSync(destFilePath)) {
+          try {
+            const commitContent = execSync(`git show ${hash}:"${filePath}"`, { cwd, maxBuffer: 10 * 1024 * 1024 });
+            const destContent = fs.readFileSync(destFilePath);
+            if (commitContent.equals(destContent)) {
+              isIdentical = true;
+            }
+          } catch (e) {
+            // fallback / ignore errors
+          }
+        }
+      }
+      
+      return { code, path: filePath, isIdentical };
     });
     res.json(files);
   } catch (error) {

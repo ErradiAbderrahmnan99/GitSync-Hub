@@ -630,10 +630,38 @@ async function loadCommitFiles(hash, sourceProj, destProj, listContainer) {
       const badgeClass = `badge-status badge-${statusCode.toLowerCase().replace('?', 'u')}`;
       const isBinary = isBinaryFile(file.path);
       const isChecked = appState.selectedCommitFiles[hash] && appState.selectedCommitFiles[hash].has(file.path) ? 'checked' : '';
+      const isIdentical = file.isIdentical;
       
+      const checkboxHtml = isIdentical
+        ? `<input type="checkbox" disabled style="margin-right: 0.75rem; width: 14px; height: 14px; opacity: 0.35; cursor: not-allowed;">`
+        : `<input type="checkbox" class="commit-file-checkbox" data-path="${file.path}" data-commit="${hash}" ${isChecked} onchange="toggleCommitFileSelection('${hash}', '${file.path}', this.checked)" onclick="event.stopPropagation()" style="margin-right: 0.75rem; width: 14px; height: 14px; cursor: pointer; accent-color: var(--primary);">`;
+
+      const actionsHtml = isIdentical
+        ? `
+          <button class="btn-icon" data-tooltip="View Diff in Commit" onclick="showCommitDiff('${file.path}', '${hash}', '${sourceProj}')" style="width: 28px; height: 28px; padding: 0;">
+            <i data-lucide="file-text" style="width: 14px; height: 14px;"></i>
+          </button>
+          <span style="font-size: 0.72rem; color: var(--emerald-text); font-weight: 600; display: inline-flex; align-items: center; gap: 0.2rem; margin-left: 0.5rem; padding: 0.2rem 0.4rem; border-radius: 4px; background: rgba(16, 185, 129, 0.08);">
+            <i data-lucide="check" style="width: 12px; height: 12px;"></i> Identical
+          </span>
+        `
+        : `
+          <button class="btn-icon" data-tooltip="View Diff in Commit" onclick="showCommitDiff('${file.path}', '${hash}', '${sourceProj}')" style="width: 28px; height: 28px; padding: 0;">
+            <i data-lucide="file-text" style="width: 14px; height: 14px;"></i>
+          </button>
+          <button class="btn-icon" style="color: var(--emerald-text); width: 28px; height: 28px; padding: 0;" data-tooltip="Copy to ${destProj} (Overwrite)" onclick="syncFile('${file.path}', '${sourceProj}', '${destProj}', false)">
+            <i data-lucide="arrow-right-left" style="width: 14px; height: 14px;"></i>
+          </button>
+          ${!isBinary ? `
+          <button class="btn-icon" style="color: var(--cyan); width: 28px; height: 28px; padding: 0;" data-tooltip="Smart Merge with ${destProj}" onclick="syncFile('${file.path}', '${sourceProj}', '${destProj}', true)">
+            <i data-lucide="git-merge" style="width: 14px; height: 14px;"></i>
+          </button>
+          ` : ''}
+        `;
+
       return `
         <div class="commit-file-row" style="display: flex; align-items: center; padding: 0.5rem 0.75rem;">
-          <input type="checkbox" class="commit-file-checkbox" data-path="${file.path}" data-commit="${hash}" ${isChecked} onchange="toggleCommitFileSelection('${hash}', '${file.path}', this.checked)" onclick="event.stopPropagation()" style="margin-right: 0.75rem; width: 14px; height: 14px; cursor: pointer; accent-color: var(--primary);">
+          ${checkboxHtml}
           <div class="commit-file-details" style="flex: 1; display: flex; align-items: center; gap: 0.75rem; min-width: 0;">
             <div class="${badgeClass}" style="min-width: 24px; text-align: center;">${statusCode}</div>
             <div class="file-meta" style="min-width: 0; flex: 1;">
@@ -641,18 +669,8 @@ async function loadCommitFiles(hash, sourceProj, destProj, listContainer) {
               <span class="file-dir" style="font-size: 0.72rem; color: var(--text-muted); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${directory}</span>
             </div>
           </div>
-          <div class="commit-file-actions" style="margin-left: auto; display: flex; gap: 0.25rem;">
-            <button class="btn-icon" data-tooltip="View Diff in Commit" onclick="showCommitDiff('${file.path}', '${hash}', '${sourceProj}')" style="width: 28px; height: 28px; padding: 0;">
-              <i data-lucide="file-text" style="width: 14px; height: 14px;"></i>
-            </button>
-            <button class="btn-icon" style="color: var(--emerald-text); width: 28px; height: 28px; padding: 0;" data-tooltip="Copy to ${destProj} (Overwrite)" onclick="syncFile('${file.path}', '${sourceProj}', '${destProj}', false)">
-              <i data-lucide="arrow-right-left" style="width: 14px; height: 14px;"></i>
-            </button>
-            ${!isBinary ? `
-            <button class="btn-icon" style="color: var(--cyan); width: 28px; height: 28px; padding: 0;" data-tooltip="Smart Merge with ${destProj}" onclick="syncFile('${file.path}', '${sourceProj}', '${destProj}', true)">
-              <i data-lucide="git-merge" style="width: 14px; height: 14px;"></i>
-            </button>
-            ` : ''}
+          <div class="commit-file-actions" style="margin-left: auto; display: flex; gap: 0.25rem; align-items: center;">
+            ${actionsHtml}
           </div>
         </div>
       `;
