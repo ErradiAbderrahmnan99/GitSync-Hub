@@ -150,6 +150,16 @@ async function fetchStatus() {
     document.querySelector('#panel-ccistta h2').textContent = `${appState.PROJECT_B.name} Changes`;
     document.querySelector('#sync-all-to-adha-btn span').textContent = `Sync All to ${appState.PROJECT_A.name}`;
 
+    // Update Full Project Scanner Sync All buttons
+    const scanSyncAToBSpan = document.querySelector('#btn-scan-sync-a-to-b span');
+    if (scanSyncAToBSpan) {
+      scanSyncAToBSpan.textContent = `Sync All ${appState.PROJECT_A.name} ➔ ${appState.PROJECT_B.name}`;
+    }
+    const scanSyncBToASpan = document.querySelector('#btn-scan-sync-b-to-a span');
+    if (scanSyncBToASpan) {
+      scanSyncBToASpan.textContent = `Sync All ${appState.PROJECT_B.name} ➔ ${appState.PROJECT_A.name}`;
+    }
+
     // Pre-fill paths f settings inputs
     configPathA.value = data.PROJECT_A.path;
     configPathB.value = data.PROJECT_B.path;
@@ -305,17 +315,17 @@ function renderProjectList(changes, container, sourceProj, destProj) {
           </button>
           ${file.isIdentical ? `
           <span style="font-size: 0.72rem; color: var(--emerald-text); padding: 0.25rem 0.5rem; font-weight: 600; background: rgba(16, 185, 129, 0.06); border: 1px solid rgba(16, 185, 129, 0.2); border-radius: 6px; display: inline-flex; align-items: center; gap: 0.25rem; margin-right: 0.5rem; user-select: none;">
-            <i data-lucide="check" style="width: 12px; height: 12px; stroke-width: 3;"></i> Identical to ${destProj}
+            <i data-lucide="check" style="width: 12px; height: 12px; stroke-width: 3;"></i> Identical to ${appState[destProj].name}
           </span>
           ` : `
-          <button class="btn-icon" data-tooltip="Compare with ${destProj}" onclick="showDiff('${file.path}', true, '${sourceProj}')">
+          <button class="btn-icon" data-tooltip="Compare with ${appState[destProj].name}" onclick="showDiff('${file.path}', true, '${sourceProj}')">
             <i data-lucide="git-compare"></i>
           </button>
-          <button class="btn-icon" style="color: var(--emerald-text)" data-tooltip="Copy to ${destProj} (Overwrite)" onclick="syncFile('${file.path}', '${sourceProj}', '${destProj}', false)">
+          <button class="btn-icon" style="color: var(--emerald-text)" data-tooltip="Copy to ${appState[destProj].name} (Overwrite)" onclick="syncFile('${file.path}', '${sourceProj}', '${destProj}', false)">
             <i data-lucide="arrow-right-left"></i>
           </button>
           ${!isBinaryFile(file.path) ? `
-          <button class="btn-icon" style="color: var(--cyan)" data-tooltip="Smart Merge with ${destProj}" onclick="syncFile('${file.path}', '${sourceProj}', '${destProj}', true)">
+          <button class="btn-icon" style="color: var(--cyan)" data-tooltip="Smart Merge with ${appState[destProj].name}" onclick="syncFile('${file.path}', '${sourceProj}', '${destProj}', true)">
             <i data-lucide="git-merge"></i>
           </button>
           ` : ''}
@@ -389,18 +399,18 @@ async function showDiff(filePath, compare = false, sourceProject = 'PROJECT_A') 
       diffModalBadge.style.color = '#c084fc';
       diffModalBadge.style.borderColor = 'rgba(167, 139, 250, 0.3)';
       
-      modalSyncText.textContent = `Sync: Overwrite ${destProject}`;
+      modalSyncText.textContent = `Sync: Overwrite ${appState[destProject].name}`;
       modalSyncBtn.style.display = 'inline-flex';
       modalSyncBtn.onclick = () => syncFile(filePath, sourceProject, destProject, false);
     } else {
-      diffModalBadge.textContent = `${sourceProject} Git Diff`;
+      diffModalBadge.textContent = `${appState[sourceProject].name} Git Diff`;
       const sourceGlow = sourceProject === 'PROJECT_A' ? 'var(--cyan-glow)' : 'var(--pink-glow)';
       const sourceColor = sourceProject === 'PROJECT_A' ? 'var(--cyan)' : 'var(--pink)';
       diffModalBadge.style.background = sourceGlow;
       diffModalBadge.style.color = sourceColor;
       diffModalBadge.style.borderColor = sourceColor;
 
-      modalSyncText.textContent = `Sync to ${destProject}`;
+      modalSyncText.textContent = `Sync to ${appState[destProject].name}`;
       modalSyncBtn.style.display = 'inline-flex';
       modalSyncBtn.onclick = () => syncFile(filePath, sourceProject, destProject, false);
     }
@@ -452,14 +462,14 @@ async function showCommitDiff(filePath, commitHash, sourceProject) {
       modalMergeBtn.style.display = 'none';
     }
 
-    diffModalBadge.textContent = `${sourceProject} Commit Diff`;
+    diffModalBadge.textContent = `${appState[sourceProject].name} Commit Diff`;
     const sourceGlow = sourceProject === 'PROJECT_A' ? 'var(--cyan-glow)' : 'var(--pink-glow)';
     const sourceColor = sourceProject === 'PROJECT_A' ? 'var(--cyan)' : 'var(--pink)';
     diffModalBadge.style.background = sourceGlow;
     diffModalBadge.style.color = sourceColor;
     diffModalBadge.style.borderColor = sourceColor;
 
-    modalSyncText.textContent = `Sync to ${destProject}`;
+    modalSyncText.textContent = `Sync to ${appState[destProject].name}`;
     modalSyncBtn.style.display = 'inline-flex';
     modalSyncBtn.onclick = () => syncFile(filePath, sourceProject, destProject, false);
     
@@ -649,11 +659,11 @@ async function loadCommitFiles(hash, sourceProj, destProj, listContainer) {
           <button class="btn-icon" data-tooltip="View Diff in Commit" onclick="showCommitDiff('${file.path}', '${hash}', '${sourceProj}')" style="width: 28px; height: 28px; padding: 0;">
             <i data-lucide="file-text" style="width: 14px; height: 14px;"></i>
           </button>
-          <button class="btn-icon" style="color: var(--emerald-text); width: 28px; height: 28px; padding: 0;" data-tooltip="Copy to ${destProj} (Overwrite)" onclick="syncFile('${file.path}', '${sourceProj}', '${destProj}', false)">
+          <button class="btn-icon" style="color: var(--emerald-text); width: 28px; height: 28px; padding: 0;" data-tooltip="Copy to ${appState[destProj].name} (Overwrite)" onclick="syncFile('${file.path}', '${sourceProj}', '${destProj}', false)">
             <i data-lucide="arrow-right-left" style="width: 14px; height: 14px;"></i>
           </button>
           ${!isBinary ? `
-          <button class="btn-icon" style="color: var(--cyan); width: 28px; height: 28px; padding: 0;" data-tooltip="Smart Merge with ${destProj}" onclick="syncFile('${file.path}', '${sourceProj}', '${destProj}', true)">
+          <button class="btn-icon" style="color: var(--cyan); width: 28px; height: 28px; padding: 0;" data-tooltip="Smart Merge with ${appState[destProj].name}" onclick="syncFile('${file.path}', '${sourceProj}', '${destProj}', true)">
             <i data-lucide="git-merge" style="width: 14px; height: 14px;"></i>
           </button>
           ` : ''}
