@@ -242,6 +242,16 @@ app.post('/api/config', (req, res) => {
   try {
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(PROJECTS, null, 2), 'utf8');
     fs.writeFileSync(ENV_FILE, `PORT=${PORT}\nPROJECT_A_PATH=${resolvedA}\nPROJECT_B_PATH=${resolvedB}\n`, 'utf8');
+    
+    if (liveSyncMode !== 'off') {
+      try {
+        startLiveSync(liveSyncMode);
+      } catch (e) {
+        liveSyncMode = 'off';
+        console.error('Failed to restart Live Sync after config change:', e.message);
+      }
+    }
+
     res.json({
       success: true,
       message: 'Configuration saved successfully.',
@@ -892,6 +902,233 @@ app.get('/api/scan-compare', (req, res) => {
     res.json(differences);
   } catch (error) {
     res.status(500).json({ error: `Scanner failed: ${error.message}` });
+  }
+});
+
+app.get('/api/git-branches', (req, res) => {
+  let config;
+  try {
+    config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+  } catch (e) {
+    return res.status(500).json({ error: 'Failed to read config.json' });
+  }
+
+  const getProjectBranches = (projPath) => {
+    if (!projPath || !fs.existsSync(projPath) || !fs.existsSync(path.join(projPath, '.git'))) {
+      return { current: '', branches: [] };
+    }
+    try {
+      const current = execSync('git branch --show-current', { cwd: projPath, encoding: 'utf8' }).trim();
+      const branchesOut = execSync('git branch --format="%(refname:short)"', { cwd: projPath, encoding: 'utf8' });
+      const branches = branchesOut.split('\n').map(b => b.trim()).filter(Boolean);
+      // Ensure current is in the list
+      if (current && !branches.includes(current)) {
+        branches.push(current);
+      }
+      return { current, branches };
+    } catch (err) {
+      return { current: '', branches: [] };
+    }
+  };
+
+  res.json({
+    PROJECT_A: getProjectBranches(config.PROJECT_A),
+    PROJECT_B: getProjectBranches(config.PROJECT_B)
+  });
+});
+
+app.post('/api/git-checkout', (req, res) => {
+  const { project, branch } = req.body;
+  let config;
+  try {
+    config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+  } catch (e) {
+    return res.status(500).json({ error: 'Failed to read config.json' });
+  }
+
+  const projPath = config[project];
+  if (!projPath || !fs.existsSync(projPath)) {
+    return res.status(400).json({ error: 'Invalid project path' });
+  }
+
+  try {
+    execSync(`git checkout ${branch}`, { cwd: projPath });
+    res.json({ success: true, message: `Switched ${project} to branch ${branch}` });
+  } catch (error) {
+    res.status(500).json({ error: `Checkout failed: ${error.message}` });
+  }
+});
+
+// ================= Live Sync Mode =================
+const chokidar = require('chokidar');
+
+let liveSyncMode = 'off'; // 'off', 'a-to-b', 'b-to-a'
+let liveSyncWatcher = null;
+const liveSyncClients = new Set();
+
+function stopLiveSync() {
+  if (liveSyncWatcher) {
+    liveSyncWatcher.close();
+    liveSyncWatcher = null;
+  }
+}
+
+function sendLiveSyncEvent(event, data) {
+  const message = `data: ${JSON.stringify({ event, data })}\n\n`;
+  liveSyncClients.forEach(client => {
+    try {
+      client.write(message);
+    } catch (e) {
+      liveSyncClients.delete(client);
+    }
+  });
+}
+
+function isGitIgnored(repoPath, relativePath) {
+  try {
+    execSync(`git check-ignore "${relativePath}"`, { cwd: repoPath, stdio: 'ignore' });
+    return true; // exit code 0 means ignored
+  } catch (err) {
+    return false; // non-zero exit code means not ignored
+  }
+}
+
+function isActiveChange(repoPath, relativePath) {
+  try {
+    const output = execSync(`git status --porcelain -u "${relativePath}"`, { cwd: repoPath, encoding: 'utf8' });
+    return output.trim().length > 0;
+  } catch (err) {
+    console.error(`[Live Sync] Error checking git status for ${relativePath}:`, err.message);
+    return false;
+  }
+}
+
+function startLiveSync(mode) {
+  stopLiveSync();
+  
+  liveSyncMode = mode;
+  if (mode === 'off') {
+    sendLiveSyncEvent('status', { mode: 'off' });
+    console.log('[Live Sync] Stopped');
+    return;
+  }
+
+  const sourceProj = mode === 'a-to-b' ? 'PROJECT_A' : 'PROJECT_B';
+  const destProj = mode === 'a-to-b' ? 'PROJECT_B' : 'PROJECT_A';
+  
+  const sourcePath = PROJECTS[sourceProj];
+  const destPath = PROJECTS[destProj];
+
+  if (!sourcePath || !fs.existsSync(sourcePath) || !destPath || !fs.existsSync(destPath)) {
+    throw new Error('Project paths are not configured or do not exist.');
+  }
+
+  // Watch the source path
+  liveSyncWatcher = chokidar.watch(sourcePath, {
+    ignored: [
+      '**/.git/**',
+      '**/node_modules/**',
+      '**/vendor/**',
+      '**/storage/**'
+    ],
+    persistent: true,
+    ignoreInitial: true, // only watch future changes
+    awaitWriteFinish: {
+      stabilityThreshold: 150,
+      pollInterval: 50
+    }
+  });
+
+  liveSyncWatcher.on('all', (event, filePath) => {
+    const relativePath = path.relative(sourcePath, filePath);
+    
+    // Check if ignored by git
+    if (isGitIgnored(sourcePath, relativePath)) {
+      return;
+    }
+
+    // Only sync if the file is in git status (Active Changes)
+    if (!isActiveChange(sourcePath, relativePath)) {
+      return;
+    }
+
+    const targetPath = path.join(destPath, relativePath);
+
+    if (event === 'add' || event === 'change') {
+      try {
+        fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+        fs.copyFileSync(filePath, targetPath);
+        console.log(`[Live Sync] Copied: ${relativePath}`);
+        sendLiveSyncEvent('sync', {
+          action: 'copy',
+          file: relativePath,
+          source: getProjectName(sourcePath),
+          dest: getProjectName(destPath)
+        });
+      } catch (err) {
+        console.error(`[Live Sync] Error copying ${relativePath}:`, err);
+        sendLiveSyncEvent('error', {
+          file: relativePath,
+          error: err.message
+        });
+      }
+    } else if (event === 'unlink') {
+      try {
+        if (fs.existsSync(targetPath)) {
+          fs.unlinkSync(targetPath);
+          console.log(`[Live Sync] Deleted: ${relativePath}`);
+          sendLiveSyncEvent('sync', {
+            action: 'delete',
+            file: relativePath,
+            source: getProjectName(sourcePath),
+            dest: getProjectName(destPath)
+          });
+        }
+      } catch (err) {
+        console.error(`[Live Sync] Error deleting ${relativePath}:`, err);
+        sendLiveSyncEvent('error', {
+          file: relativePath,
+          error: err.message
+        });
+      }
+    }
+  });
+
+  sendLiveSyncEvent('status', { mode });
+  console.log(`[Live Sync] Started watching: ${sourcePath} ➔ ${destPath}`);
+}
+
+app.get('/api/live-sync-events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  liveSyncClients.add(res);
+
+  // Send initial state on connection
+  res.write(`data: ${JSON.stringify({ event: 'init', data: { mode: liveSyncMode } })}\n\n`);
+
+  req.on('close', () => {
+    liveSyncClients.delete(res);
+  });
+});
+
+app.get('/api/live-sync-status', (req, res) => {
+  res.json({ mode: liveSyncMode });
+});
+
+app.post('/api/live-sync', (req, res) => {
+  const { mode } = req.body;
+  if (!['off', 'a-to-b', 'b-to-a'].includes(mode)) {
+    return res.status(400).json({ error: 'Invalid live sync mode' });
+  }
+
+  try {
+    startLiveSync(mode);
+    res.json({ success: true, mode: liveSyncMode });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

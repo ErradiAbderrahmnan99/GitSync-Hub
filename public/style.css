@@ -1188,3 +1188,15 @@ body {
   flex-shrink: 0;
 }
 
+/* Dropdown Menu & Option elements styling for consistent dark theme */
+select {
+  background-color: #0f172a !important; /* Slate 900 background */
+  color: #f1f5f9 !important; /* Slate 100 text */
+}
+
+select option {
+  background-color: #0f172a !important;
+  color: #f1f5f9 !important;
+}
+
+

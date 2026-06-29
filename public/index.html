@@ -32,6 +32,18 @@
         </div>
       </div>
       <div class="header-actions" style="display: flex; gap: 0.75rem; align-items: center;">
+        <!-- Live Sync Mode Control -->
+        <div class="live-sync-control glass-card" style="display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0.6rem; border-radius: 8px; border: 1px solid var(--border); height: 38px; background: rgba(255,255,255,0.01);">
+          <div style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.75rem; color: var(--text-muted); font-weight: 500;">
+            <span class="live-sync-dot" id="live-sync-status-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #64748b; display: inline-block; transition: all 0.3s ease;"></span>
+            <span>Live Sync:</span>
+          </div>
+          <select id="select-live-sync" class="config-input" style="font-size: 0.75rem; padding: 0.15rem 0.4rem; height: 26px; border-radius: 4px; border: 1px solid var(--border); background: rgba(0,0,0,0.3); color: var(--text-main); font-weight: 600; cursor: pointer; outline: none; margin: 0; min-width: 140px;">
+            <option value="off">Off</option>
+            <option value="a-to-b">ADHA ➔ CCISTTA</option>
+            <option value="b-to-a">CCISTTA ➔ ADHA</option>
+          </select>
+        </div>
         <button id="config-btn" class="btn btn-outline" style="color: var(--cyan) !important; border-color: rgba(6, 182, 212, 0.4) !important; background: rgba(6, 182, 212, 0.05) !important; display: inline-flex; align-items: center; gap: 0.5rem; height: 38px;">
           <i data-lucide="settings" style="color: var(--cyan) !important;"></i>
           <span style="color: var(--cyan) !important;">Configure Paths</span>
@@ -55,6 +67,13 @@
         <div class="repo-status" id="status-adha">
           <span class="status-indicator online"></span> Active Git Repo
         </div>
+        <div class="branch-select-wrapper" style="margin-top: 0.75rem; display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; background: rgba(255,255,255,0.03); padding: 0.35rem 0.6rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);">
+          <i data-lucide="git-branch" style="width: 14px; height: 14px; color: var(--cyan);"></i>
+          <span style="color: var(--text-muted); font-weight: 500;">Branch:</span>
+          <select id="branch-select-adha" style="background: transparent; border: none; color: var(--text-main); font-weight: 600; cursor: pointer; outline: none; padding-right: 0.5rem; flex: 1; font-size: 0.8rem;">
+            <option value="" disabled selected>Loading...</option>
+          </select>
+        </div>
       </div>
 
       <div class="path-card card-ccistta">
@@ -66,6 +85,13 @@
         </div>
         <div class="repo-status" id="status-ccistta">
           <span class="status-indicator online"></span> Active Git Repo
+        </div>
+        <div class="branch-select-wrapper" style="margin-top: 0.75rem; display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; background: rgba(255,255,255,0.03); padding: 0.35rem 0.6rem; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);">
+          <i data-lucide="git-branch" style="width: 14px; height: 14px; color: var(--pink);"></i>
+          <span style="color: var(--text-muted); font-weight: 500;">Branch:</span>
+          <select id="branch-select-ccistta" style="background: transparent; border: none; color: var(--text-main); font-weight: 600; cursor: pointer; outline: none; padding-right: 0.5rem; flex: 1; font-size: 0.8rem;">
+            <option value="" disabled selected>Loading...</option>
+          </select>
         </div>
       </div>
     </section>
@@ -84,6 +110,7 @@
         <i data-lucide="files"></i>
         <span>Full Scanner</span>
       </button>
+
     </div>
 
     <!-- Main Content: Side-by-Side Status List -->
@@ -121,6 +148,16 @@
             <input type="checkbox" id="select-all-adha" class="select-all-checkbox" data-project="PROJECT_A" checked style="accent-color: var(--cyan); cursor: pointer; width: 16px; height: 16px; flex-shrink: 0; margin-right: 0.25rem;" data-tooltip="Select All">
             <i data-lucide="search"></i>
             <input type="text" id="search-adha" placeholder="Filter changed files...">
+          </div>
+          <div class="filter-bar" style="margin-top: 0.5rem; margin-bottom: 0.75rem; display: flex; gap: 0.5rem;">
+            <select id="filter-type-adha" class="config-input" style="flex: 1; padding: 0.35rem 0.5rem; font-size: 0.75rem; border-radius: 4px; background: rgba(0,0,0,0.25); border: 1px solid var(--border); color: var(--text-main);">
+              <option value="all">All Types</option>
+              <option value="front">Frontend Only</option>
+              <option value="back">Backend Only</option>
+            </select>
+            <select id="filter-module-adha" class="config-input" style="flex: 1.5; padding: 0.35rem 0.5rem; font-size: 0.75rem; border-radius: 4px; background: rgba(0,0,0,0.25); border: 1px solid var(--border); color: var(--text-main);">
+              <option value="all">All Modules</option>
+            </select>
           </div>
           <div class="file-list" id="list-adha">
             <!-- Dynamically populated -->
@@ -165,6 +202,16 @@
             <input type="checkbox" id="select-all-ccistta" class="select-all-checkbox" data-project="PROJECT_B" checked style="accent-color: var(--pink); cursor: pointer; width: 16px; height: 16px; flex-shrink: 0; margin-right: 0.25rem;" data-tooltip="Select All">
             <i data-lucide="search"></i>
             <input type="text" id="search-ccistta" placeholder="Filter changed files...">
+          </div>
+          <div class="filter-bar" style="margin-top: 0.5rem; margin-bottom: 0.75rem; display: flex; gap: 0.5rem;">
+            <select id="filter-type-ccistta" class="config-input" style="flex: 1; padding: 0.35rem 0.5rem; font-size: 0.75rem; border-radius: 4px; background: rgba(0,0,0,0.25); border: 1px solid var(--border); color: var(--text-main);">
+              <option value="all">All Types</option>
+              <option value="front">Frontend Only</option>
+              <option value="back">Backend Only</option>
+            </select>
+            <select id="filter-module-ccistta" class="config-input" style="flex: 1.5; padding: 0.35rem 0.5rem; font-size: 0.75rem; border-radius: 4px; background: rgba(0,0,0,0.25); border: 1px solid var(--border); color: var(--text-main);">
+              <option value="all">All Modules</option>
+            </select>
           </div>
           <div class="file-list" id="list-ccistta">
             <!-- Dynamically populated -->
@@ -216,9 +263,8 @@
       </section>
     </main>
 
-    <!-- Full Scanner View -->
     <main class="main-layout app-view" id="view-scan" style="display: none; grid-template-columns: 1fr;">
-      <section class="panel-container" style="max-width: 1200px; margin: 0 auto; width: 100%;">
+      <section class="panel-container" style="width: 100%;">
         <div class="panel-header header-cyan" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
           <div class="panel-title">
             <i data-lucide="files" class="icon-cyan"></i>
@@ -241,9 +287,19 @@
           </div>
         </div>
         <div class="panel-body">
-          <div class="search-box" style="margin-bottom: 1rem;">
+          <div class="search-box" style="margin-bottom: 0.5rem;">
             <i data-lucide="search"></i>
             <input type="text" id="search-scan" placeholder="Filter differing files...">
+          </div>
+          <div class="filter-bar" style="margin-bottom: 1rem; display: flex; gap: 0.5rem; max-width: 400px;">
+            <select id="filter-type-scan" class="config-input" style="flex: 1; padding: 0.35rem 0.5rem; font-size: 0.75rem; border-radius: 4px; background: rgba(0,0,0,0.25); border: 1px solid var(--border); color: var(--text-main);">
+              <option value="all">All Types</option>
+              <option value="front">Frontend Only</option>
+              <option value="back">Backend Only</option>
+            </select>
+            <select id="filter-module-scan" class="config-input" style="flex: 1.5; padding: 0.35rem 0.5rem; font-size: 0.75rem; border-radius: 4px; background: rgba(0,0,0,0.25); border: 1px solid var(--border); color: var(--text-main);">
+              <option value="all">All Modules</option>
+            </select>
           </div>
           <div class="file-list" id="scan-list" style="max-height: 600px; overflow-y: auto;">
             <div class="loading-state">
@@ -254,6 +310,8 @@
         </div>
       </section>
     </main>
+
+
   </div>
 
   <!-- Diff Viewer Modal -->

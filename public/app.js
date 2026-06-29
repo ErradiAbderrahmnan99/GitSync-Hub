@@ -68,6 +68,9 @@ const searchScan = document.getElementById('search-scan');
 const btnScanSyncAToB = document.getElementById('btn-scan-sync-a-to-b');
 const btnScanSyncBToA = document.getElementById('btn-scan-sync-b-to-a');
 const btnScanRefresh = document.getElementById('btn-scan-refresh');
+// Live Sync Elements
+const selectLiveSync = document.getElementById('select-live-sync');
+const liveSyncStatusDot = document.getElementById('live-sync-status-dot');
 
 // Initialize Lucide Icons
 function initIcons() {
@@ -160,10 +163,20 @@ async function fetchStatus() {
       scanSyncBToASpan.textContent = `Sync All ${appState.PROJECT_B.name} ➔ ${appState.PROJECT_A.name}`;
     }
 
+    // Update Test Runner project options
+    const testProjectOptionA = document.querySelector('#test-project option[value="PROJECT_A"]');
+    if (testProjectOptionA) testProjectOptionA.textContent = appState.PROJECT_A.name;
+    const testProjectOptionB = document.querySelector('#test-project option[value="PROJECT_B"]');
+    if (testProjectOptionB) testProjectOptionB.textContent = appState.PROJECT_B.name;
+
     // Pre-fill paths f settings inputs
     configPathA.value = data.PROJECT_A.path;
     configPathB.value = data.PROJECT_B.path;
     
+    updateModuleDropdown(appState.PROJECT_A.changes, document.getElementById('filter-module-adha'));
+    updateModuleDropdown(appState.PROJECT_B.changes, document.getElementById('filter-module-ccistta'));
+
+    fetchBranches();
     renderLists();
     showToast('Fetched latest changes from git status.', 'info');
   } catch (error) {
@@ -254,18 +267,42 @@ function renderLists() {
   const adhaQuery = searchAdha.value.toLowerCase();
   const ccisttaQuery = searchCcistta.value.toLowerCase();
   
-  // Filter changes
-  const filteredAdha = appState.PROJECT_A.changes.filter(change => 
-    change.path.toLowerCase().includes(adhaQuery)
-  );
-  
-  const filteredCcistta = appState.PROJECT_B.changes.filter(change => 
-    change.path.toLowerCase().includes(ccisttaQuery)
-  );
+  const typeAdha = document.getElementById('filter-type-adha')?.value || 'all';
+  const moduleAdha = document.getElementById('filter-module-adha')?.value || 'all';
+  const typeCcistta = document.getElementById('filter-type-ccistta')?.value || 'all';
+  const moduleCcistta = document.getElementById('filter-module-ccistta')?.value || 'all';
+
+  const filterFn = (changes, query, typeVal, moduleVal) => {
+    return changes.filter(change => {
+      if (!change.path.toLowerCase().includes(query)) return false;
+
+      if (typeVal === 'front') {
+        const ext = change.path.split('.').pop().toLowerCase();
+        if (!['ts', 'tsx', 'js', 'jsx', 'json', 'css', 'scss'].includes(ext)) return false;
+      } else if (typeVal === 'back') {
+        const ext = change.path.split('.').pop().toLowerCase();
+        if (['ts', 'tsx', 'js', 'jsx', 'css', 'scss'].includes(ext)) return false;
+      }
+
+      if (moduleVal !== 'all') {
+        const mod = getModuleFromPath(change.path);
+        if (moduleVal === 'other') {
+          if (mod !== 'Other') return false;
+        } else {
+          if (mod !== moduleVal) return false;
+        }
+      }
+
+      return true;
+    });
+  };
+
+  const filteredAdha = filterFn(appState.PROJECT_A.changes, adhaQuery, typeAdha, moduleAdha);
+  const filteredCcistta = filterFn(appState.PROJECT_B.changes, ccisttaQuery, typeCcistta, moduleCcistta);
   
   // Update badges
-  countAdha.textContent = appState.PROJECT_A.changes.length;
-  countCcistta.textContent = appState.PROJECT_B.changes.length;
+  countAdha.textContent = `${filteredAdha.length} / ${appState.PROJECT_A.changes.length}`;
+  countCcistta.textContent = `${filteredCcistta.length} / ${appState.PROJECT_B.changes.length}`;
   
   // Render ADHA Panel
   renderProjectList(filteredAdha, listAdha, 'PROJECT_A', 'PROJECT_B');
@@ -847,6 +884,84 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
+async function fetchBranches() {
+  const selectAdha = document.getElementById('branch-select-adha');
+  const selectCcistta = document.getElementById('branch-select-ccistta');
+  if (!selectAdha || !selectCcistta) return;
+
+  try {
+    const res = await fetch('/api/git-branches');
+    const data = await res.json();
+
+    const populate = (projKey, selectEl) => {
+      const projData = data[projKey];
+      if (!projData || !projData.branches) {
+        selectEl.innerHTML = '<option value="" disabled>No branch found</option>';
+        return;
+      }
+      selectEl.innerHTML = projData.branches.map(branch => {
+        const isCurrent = branch === projData.current;
+        return `<option value="${branch}" ${isCurrent ? 'selected' : ''}>${isCurrent ? '★ ' : ''}${branch}</option>`;
+      }).join('');
+    };
+
+    populate('PROJECT_A', selectAdha);
+    populate('PROJECT_B', selectCcistta);
+  } catch (err) {
+    console.error('Failed to fetch branches', err);
+  }
+}
+
+async function checkoutBranch(project, branch) {
+  showToast(`Checking out ${project} to ${branch}...`, 'info');
+  try {
+    const res = await fetch('/api/git-checkout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project, branch })
+    });
+    const data = await res.json();
+    if (data.error) {
+      showToast(data.error, 'error');
+    } else {
+      showToast(data.message || 'Switched branch successfully.', 'success');
+      fetchStatus();
+      fetchBranches();
+    }
+  } catch (err) {
+    showToast('Failed to checkout: ' + err.message, 'error');
+  }
+}
+
+function getModuleFromPath(filePath) {
+  const match = filePath.match(/(?:modules|src\/modules)\/([^\/]+)/i);
+  return match ? match[1] : 'Other';
+}
+
+function updateModuleDropdown(changes, selectElement) {
+  if (!selectElement) return;
+  const selectedVal = selectElement.value || 'all';
+  const modules = new Set();
+  changes.forEach(change => {
+    const mod = getModuleFromPath(change.path);
+    if (mod !== 'Other') {
+      modules.add(mod);
+    }
+  });
+
+  selectElement.innerHTML = '<option value="all">All Modules</option>' + 
+    Array.from(modules).sort().map(m => `<option value="${m}">${m}</option>`).join('') +
+    '<option value="other">Other/Root</option>';
+
+  if (Array.from(modules).includes(selectedVal) || selectedVal === 'other') {
+    selectElement.value = selectedVal;
+  } else {
+    selectElement.value = 'all';
+  }
+}
+
+
+
 // Scan both projects for differences (not bound to git status, respects .gitignore)
 async function scanProjects() {
   scanList.innerHTML = `
@@ -869,6 +984,7 @@ async function scanProjects() {
     }
 
     appState.scannerDiffs = data || [];
+    updateModuleDropdown(appState.scannerDiffs, document.getElementById('filter-module-scan'));
     renderScannerList();
   } catch (error) {
     console.error('Error scanning projects:', error);
@@ -880,11 +996,33 @@ async function scanProjects() {
 // Render filtered scanner differences list
 function renderScannerList() {
   const query = searchScan.value.toLowerCase().trim();
-  const filtered = appState.scannerDiffs.filter(file => 
-    file.path.toLowerCase().includes(query)
-  );
+  const typeVal = document.getElementById('filter-type-scan')?.value || 'all';
+  const moduleVal = document.getElementById('filter-module-scan')?.value || 'all';
 
-  countScan.textContent = filtered.length;
+  const filtered = appState.scannerDiffs.filter(file => {
+    if (!file.path.toLowerCase().includes(query)) return false;
+
+    if (typeVal === 'front') {
+      const ext = file.path.split('.').pop().toLowerCase();
+      if (!['ts', 'tsx', 'js', 'jsx', 'json', 'css', 'scss'].includes(ext)) return false;
+    } else if (typeVal === 'back') {
+      const ext = file.path.split('.').pop().toLowerCase();
+      if (['ts', 'tsx', 'js', 'jsx', 'css', 'scss'].includes(ext)) return false;
+    }
+
+    if (moduleVal !== 'all') {
+      const mod = getModuleFromPath(file.path);
+      if (moduleVal === 'other') {
+        if (mod !== 'Other') return false;
+      } else {
+        if (mod !== moduleVal) return false;
+      }
+    }
+
+    return true;
+  });
+
+  countScan.textContent = `${filtered.length} / ${appState.scannerDiffs.length}`;
 
   if (filtered.length === 0) {
     scanList.innerHTML = `
@@ -1633,6 +1771,98 @@ dirPickerModal.addEventListener('click', (e) => {
   }
 });
 
+// ================= Live Sync Client Logic =================
+let liveSyncEventSource = null;
+
+function updateLiveSyncUI(mode) {
+  if (!selectLiveSync || !liveSyncStatusDot) return;
+  
+  selectLiveSync.value = mode;
+  
+  if (mode === 'off') {
+    liveSyncStatusDot.style.background = '#64748b';
+    liveSyncStatusDot.style.boxShadow = 'none';
+    liveSyncStatusDot.classList.remove('animate-pulse');
+  } else {
+    liveSyncStatusDot.style.background = '#10b981';
+    liveSyncStatusDot.style.boxShadow = '0 0 8px rgba(16, 185, 129, 0.8)';
+    liveSyncStatusDot.classList.add('animate-pulse');
+  }
+}
+
+function initLiveSync() {
+  if (!selectLiveSync) return;
+
+  // Handle dropdown changes
+  selectLiveSync.addEventListener('change', async () => {
+    const mode = selectLiveSync.value;
+    try {
+      const res = await fetch('/api/live-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode })
+      });
+      const data = await res.json();
+      if (data.success) {
+        updateLiveSyncUI(data.mode);
+        showToast(`Live Sync mode set to: ${mode === 'off' ? 'Disabled' : mode === 'a-to-b' ? 'ADHA ➔ CCISTTA' : 'CCISTTA ➔ ADHA'}`, 'success');
+      } else {
+        showToast('Failed to switch Live Sync mode: ' + (data.error || 'Unknown error'), 'error');
+        fetchLiveSyncStatus();
+      }
+    } catch (err) {
+      showToast('Error switching Live Sync: ' + err.message, 'error');
+      fetchLiveSyncStatus();
+    }
+  });
+
+  // Listen to Server-Sent Events
+  connectLiveSyncEvents();
+}
+
+async function fetchLiveSyncStatus() {
+  try {
+    const res = await fetch('/api/live-sync-status');
+    const data = await res.json();
+    updateLiveSyncUI(data.mode);
+  } catch (err) {
+    console.error('Failed to fetch Live Sync status', err);
+  }
+}
+
+function connectLiveSyncEvents() {
+  if (liveSyncEventSource) {
+    liveSyncEventSource.close();
+  }
+
+  liveSyncEventSource = new EventSource('/api/live-sync-events');
+
+  liveSyncEventSource.addEventListener('message', (e) => {
+    try {
+      const { event, data } = JSON.parse(e.data);
+      
+      if (event === 'init' || event === 'status') {
+        updateLiveSyncUI(data.mode);
+      } else if (event === 'sync') {
+        const actionLabel = data.action === 'copy' ? 'Copied' : 'Deleted';
+        const toastType = data.action === 'copy' ? 'success' : 'info';
+        showToast(`Live Sync: ${actionLabel} "${data.file}" from ${data.source} to ${data.dest}`, toastType);
+        
+        // Auto-refresh the current dashboard lists
+        if (typeof fetchStatus === 'function') fetchStatus();
+      } else if (event === 'error') {
+        showToast(`Live Sync Error: Failed to sync "${data.file}" - ${data.error}`, 'error');
+      }
+    } catch (err) {
+      console.error('Error parsing SSE event:', err);
+    }
+  });
+
+  liveSyncEventSource.onerror = (err) => {
+    console.warn('Live Sync SSE disconnected, reconnecting...', err);
+  };
+}
+
 // Initial Page Load
 document.addEventListener('DOMContentLoaded', () => {
   // Bind Select All Checkboxes
@@ -1704,12 +1934,48 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Bind branch switchers
+  const selectBranchAdha = document.getElementById('branch-select-adha');
+  if (selectBranchAdha) {
+    selectBranchAdha.addEventListener('change', (e) => {
+      checkoutBranch('PROJECT_A', e.target.value);
+    });
+  }
+
+  const selectBranchCcistta = document.getElementById('branch-select-ccistta');
+  if (selectBranchCcistta) {
+    selectBranchCcistta.addEventListener('change', (e) => {
+      checkoutBranch('PROJECT_B', e.target.value);
+    });
+  }
+
+  // Bind active changes filter selectors
+  const filterTypeAdha = document.getElementById('filter-type-adha');
+  if (filterTypeAdha) filterTypeAdha.addEventListener('change', renderLists);
+  
+  const filterModuleAdha = document.getElementById('filter-module-adha');
+  if (filterModuleAdha) filterModuleAdha.addEventListener('change', renderLists);
+
+  const filterTypeCcistta = document.getElementById('filter-type-ccistta');
+  if (filterTypeCcistta) filterTypeCcistta.addEventListener('change', renderLists);
+  
+  const filterModuleCcistta = document.getElementById('filter-module-ccistta');
+  if (filterModuleCcistta) filterModuleCcistta.addEventListener('change', renderLists);
+
+
+
   // Bind full scanner controls
   if (searchScan) {
     searchScan.addEventListener('input', () => {
       renderScannerList();
     });
   }
+
+  const filterTypeScan = document.getElementById('filter-type-scan');
+  if (filterTypeScan) filterTypeScan.addEventListener('change', renderScannerList);
+
+  const filterModuleScan = document.getElementById('filter-module-scan');
+  if (filterModuleScan) filterModuleScan.addEventListener('change', renderScannerList);
 
   if (btnScanRefresh) {
     btnScanRefresh.addEventListener('click', () => {
@@ -1729,5 +1995,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  initLiveSync();
+  fetchLiveSyncStatus();
   fetchStatus();
 });
