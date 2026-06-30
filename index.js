@@ -66,6 +66,126 @@ if (fs.existsSync(CONFIG_FILE)) {
   }
 }
 
+const HISTORY_FILE = path.join(__dirname, 'sync-history.json');
+const BACKUPS_DIR = path.join(__dirname, '.sync-backups');
+
+function ensureHistorySetup() {
+  if (!fs.existsSync(BACKUPS_DIR)) {
+    fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(HISTORY_FILE)) {
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify([]), 'utf8');
+  }
+}
+
+function logSyncAction(type, action, file, from, to, customDiff = null) {
+  try {
+    ensureHistorySetup();
+    const destDir = PROJECTS[to];
+    const sourceDir = PROJECTS[from];
+    if (!destDir || !sourceDir) return null;
+
+    const destFile = path.join(destDir, file);
+    const sourceFile = path.join(sourceDir, file);
+    const id = `sync_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const hasBackup = fs.existsSync(destFile);
+
+    // Capture/Generate Diff before overwrite
+    let diffText = '';
+    if (customDiff) {
+      diffText = customDiff;
+    } else {
+      const pathA = hasBackup ? destFile : '/dev/null';
+      const pathB = action === 'delete' ? '/dev/null' : sourceFile;
+
+      if (fs.existsSync(pathA) || fs.existsSync(pathB)) {
+        try {
+          diffText = execSync(`git diff --no-index --color=never "${pathA}" "${pathB}"`, { encoding: 'utf8' });
+        } catch (err) {
+          if (err.status === 1) {
+            diffText = err.stdout;
+          }
+        }
+      }
+    }
+
+    if (hasBackup) {
+      fs.copyFileSync(destFile, path.join(BACKUPS_DIR, id));
+    }
+
+    const history = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+    const entry = {
+      id,
+      timestamp: new Date().toISOString(),
+      type, // 'file' or 'hunk'
+      action, // 'copy', 'delete', 'hunk-sync'
+      file,
+      from: getProjectName(sourceDir),
+      to: getProjectName(destDir),
+      hasBackup,
+      rolledBack: false,
+      diffText
+    };
+
+    history.unshift(entry);
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 2), 'utf8');
+    return id;
+  } catch (err) {
+    console.error('[History] Failed to log sync action:', err);
+    return null;
+  }
+}
+
+function extractHunkPatch(rawDiff, hunkIndex, relativePath) {
+  const lines = rawDiff.split('\n');
+  const headerLines = [];
+  const hunks = [];
+  let currentHunk = null;
+  let inHeader = true;
+
+  for (const line of lines) {
+    if (line.startsWith('@@')) {
+      inHeader = false;
+      if (currentHunk) {
+        hunks.push(currentHunk);
+      }
+      currentHunk = {
+        header: line,
+        lines: []
+      };
+      continue;
+    }
+
+    if (inHeader) {
+      if (line.startsWith('--- ')) {
+        headerLines.push(`--- a/${relativePath}`);
+      } else if (line.startsWith('+++ ')) {
+        headerLines.push(`+++ b/${relativePath}`);
+      } else {
+        headerLines.push(line);
+      }
+    } else if (currentHunk) {
+      currentHunk.lines.push(line);
+    }
+  }
+
+  if (currentHunk) {
+    hunks.push(currentHunk);
+  }
+
+  if (hunkIndex < 0 || hunkIndex >= hunks.length) {
+    throw new Error('Invalid hunk index');
+  }
+
+  const targetHunk = hunks[hunkIndex];
+  const patchLines = [
+    ...headerLines,
+    targetHunk.header,
+    ...targetHunk.lines
+  ];
+  return patchLines.join('\n') + '\n';
+}
+
 // Helper to get folder name from path
 function getProjectName(dirPath) {
   try {
@@ -449,6 +569,9 @@ app.post('/api/sync', (req, res) => {
   }
 
   try {
+    // Log to history before modifying the file
+    logSyncAction('file', 'copy', file, from, to);
+
     // Create destination directories if they don't exist
     const destFolder = path.dirname(destFile);
     if (!fs.existsSync(destFolder)) {
@@ -535,6 +658,9 @@ app.post('/api/sync-all', (req, res) => {
       const destFile = path.join(destDir, file);
 
       try {
+        // Log to history before modifying the file
+        logSyncAction('file', 'copy', file, from, to);
+
         const destFolder = path.dirname(destFile);
         if (!fs.existsSync(destFolder)) {
           fs.mkdirSync(destFolder, { recursive: true });
@@ -596,6 +722,186 @@ app.post('/api/sync-all', (req, res) => {
   } catch (error) {
     console.error(`[API] Bulk sync error: ${error.message}`);
     res.status(500).json({ error: `Failed to perform bulk sync: ${error.message}` });
+  }
+});
+
+// POST sync specific hunk (chunk) of a file from source to target
+app.post('/api/sync-hunk', (req, res) => {
+  const { file, from, to, hunkIndex } = req.body;
+  console.log(`[API] Hunk sync requested: file=${file}, from=${from}, to=${to}, hunkIndex=${hunkIndex}`);
+
+  if (!file || !from || !to || hunkIndex === undefined) {
+    return res.status(400).json({ error: 'Missing required parameters: file, from, to, hunkIndex' });
+  }
+
+  const sourceDir = PROJECTS[from];
+  const destDir = PROJECTS[to];
+
+  if (!sourceDir || !destDir) {
+    return res.status(400).json({ error: 'Invalid source or destination project' });
+  }
+
+  const sourceFile = path.join(sourceDir, file);
+  const destFile = path.join(destDir, file);
+
+  if (!fs.existsSync(sourceFile)) {
+    return res.status(404).json({ error: `Source file does not exist: ${sourceFile}` });
+  }
+  if (!fs.existsSync(destFile)) {
+    return res.status(400).json({ error: `Destination file does not exist. Please copy the entire file first.` });
+  }
+
+  const tempPatchFile = path.join(os.tmpdir(), `hunk-${Date.now()}-${Math.random().toString(36).substring(2, 7)}.patch`);
+
+  try {
+    // Generate reverse diff: destFile -> sourceFile (applying this to destFile makes it match sourceFile)
+    let reverseDiff = '';
+    try {
+      reverseDiff = execSync(`git diff --no-index --color=never "${destFile}" "${sourceFile}"`, { encoding: 'utf8' });
+    } catch (diffErr) {
+      if (diffErr.status === 1) {
+        reverseDiff = diffErr.stdout;
+      } else {
+        throw new Error(`Failed to generate diff: ${diffErr.message}`);
+      }
+    }
+
+    if (!reverseDiff.trim()) {
+      return res.json({ success: true, message: 'Files are already identical.' });
+    }
+
+    const patchContent = extractHunkPatch(reverseDiff, parseInt(hunkIndex), file);
+
+    // Log the sync action to history BEFORE modifying the destination file
+    logSyncAction('hunk', 'hunk-sync', file, from, to, patchContent);
+
+    // Write the patch to temp file
+    fs.writeFileSync(tempPatchFile, patchContent, 'utf8');
+
+    // Apply the patch to the destination repository
+    execSync(`git -C "${destDir}" apply --whitespace=nowarn "${tempPatchFile}"`);
+
+    res.json({
+      success: true,
+      message: `Successfully synchronized hunk #${parseInt(hunkIndex) + 1} of ${file} from ${getProjectName(sourceDir)} to ${getProjectName(destDir)}.`
+    });
+  } catch (error) {
+    console.error(`[API] ERROR syncing hunk: ${error.message}`);
+    res.status(500).json({ error: `Failed to sync hunk: ${error.message}` });
+  } finally {
+    if (fs.existsSync(tempPatchFile)) {
+      try {
+        fs.unlinkSync(tempPatchFile);
+      } catch (e) {}
+    }
+  }
+});
+
+// GET list of sync actions history
+app.get('/api/sync-history', (req, res) => {
+  try {
+    ensureHistorySetup();
+    const history = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+    res.json(history);
+  } catch (err) {
+    res.status(500).json({ error: `Failed to retrieve sync history: ${err.message}` });
+  }
+});
+
+// POST clear sync history and delete backup files
+app.post('/api/sync-history/clear', (req, res) => {
+  try {
+    ensureHistorySetup();
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify([]), 'utf8');
+    const backups = fs.readdirSync(BACKUPS_DIR);
+    for (const file of backups) {
+      try {
+        fs.unlinkSync(path.join(BACKUPS_DIR, file));
+      } catch (e) {}
+    }
+    res.json({ success: true, message: 'Sync history and backups cleared successfully.' });
+  } catch (err) {
+    res.status(500).json({ error: `Failed to clear history: ${err.message}` });
+  }
+});
+
+// POST rollback specific sync action
+app.post('/api/sync-history/rollback', (req, res) => {
+  const { id } = req.body;
+  if (!id) {
+    return res.status(400).json({ error: 'Missing log entry ID' });
+  }
+
+  try {
+    ensureHistorySetup();
+    const history = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+    const entry = history.find(e => e.id === id);
+
+    if (!entry) {
+      return res.status(404).json({ error: 'Sync log entry not found.' });
+    }
+
+    if (entry.rolledBack) {
+      return res.status(400).json({ error: 'This sync action has already been rolled back.' });
+    }
+
+    // Resolve the real path of the destination project directory
+    // Match the project name back to its key (PROJECT_A or PROJECT_B)
+    let projectKey = null;
+    if (getProjectName(PROJECTS.PROJECT_A) === entry.to) {
+      projectKey = 'PROJECT_A';
+    } else if (getProjectName(PROJECTS.PROJECT_B) === entry.to) {
+      projectKey = 'PROJECT_B';
+    }
+
+    if (!projectKey) {
+      return res.status(400).json({ error: `Project "${entry.to}" is no longer configured or available.` });
+    }
+
+    const destDir = PROJECTS[projectKey];
+    const destFile = path.join(destDir, entry.file);
+
+    if (entry.hasBackup) {
+      const backupFile = path.join(BACKUPS_DIR, entry.id);
+      if (!fs.existsSync(backupFile)) {
+        return res.status(500).json({ error: 'Backup file is missing from store.' });
+      }
+      fs.mkdirSync(path.dirname(destFile), { recursive: true });
+      fs.copyFileSync(backupFile, destFile);
+    } else {
+      // Newly created file, so rollback means delete it
+      if (fs.existsSync(destFile)) {
+        fs.unlinkSync(destFile);
+      }
+    }
+
+    // Log the rollback action by prepending a new entry
+    const rollbackEntryId = `rollback_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const rollbackLogEntry = {
+      id: rollbackEntryId,
+      timestamp: new Date().toISOString(),
+      type: 'rollback',
+      action: 'rollback',
+      file: entry.file,
+      from: entry.to, // rolled back FROM destination
+      to: entry.from, // TO source
+      hasBackup: false,
+      rolledBack: false,
+      parentEntryId: entry.id
+    };
+
+    entry.rolledBack = true;
+    history.unshift(rollbackLogEntry);
+
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 2), 'utf8');
+
+    res.json({
+      success: true,
+      message: `Successfully rolled back change on "${entry.file}".`
+    });
+  } catch (err) {
+    console.error('[API] Rollback error:', err);
+    res.status(500).json({ error: `Failed to perform rollback: ${err.message}` });
   }
 });
 
@@ -871,17 +1177,17 @@ app.get('/api/scan-compare', (req, res) => {
       } else {
         // Exists in both, check if different
         let different = false;
-        if (inIndexA && inIndexB) {
-          different = mapA.get(file) !== mapB.get(file);
+        if (inIndexA && inIndexB && mapA.get(file) !== mapB.get(file)) {
+          different = true;
         } else {
-          // One or both are untracked
+          // If index hashes are equal, or one/both are untracked, verify disk contents
           const sizeA = fs.existsSync(fullPathA) ? fs.statSync(fullPathA).size : null;
           const sizeB = fs.existsSync(fullPathB) ? fs.statSync(fullPathB).size : null;
           if (sizeA !== sizeB) {
             different = true;
           } else {
-            const contentA = fs.existsSync(fullPathA) ? fs.readFileSync(fullPathA) : '';
-            const contentB = fs.existsSync(fullPathB) ? fs.readFileSync(fullPathB) : '';
+            const contentA = fs.existsSync(fullPathA) ? fs.readFileSync(fullPathA) : Buffer.alloc(0);
+            const contentB = fs.existsSync(fullPathB) ? fs.readFileSync(fullPathB) : Buffer.alloc(0);
             different = !contentA.equals(contentB);
           }
         }
@@ -1041,6 +1347,7 @@ function startLiveSync(mode) {
 
     if (event === 'add' || event === 'change') {
       try {
+        logSyncAction('file', 'copy', relativePath, sourceProj, destProj);
         fs.mkdirSync(path.dirname(targetPath), { recursive: true });
         fs.copyFileSync(filePath, targetPath);
         console.log(`[Live Sync] Copied: ${relativePath}`);
@@ -1060,6 +1367,7 @@ function startLiveSync(mode) {
     } else if (event === 'unlink') {
       try {
         if (fs.existsSync(targetPath)) {
+          logSyncAction('file', 'delete', relativePath, sourceProj, destProj);
           fs.unlinkSync(targetPath);
           console.log(`[Live Sync] Deleted: ${relativePath}`);
           sendLiveSyncEvent('sync', {

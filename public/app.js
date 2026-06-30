@@ -55,9 +55,11 @@ const toastContainer = document.getElementById('toast-container');
 const btnTabChanges = document.getElementById('btn-tab-changes');
 const btnTabCommits = document.getElementById('btn-tab-commits');
 const btnTabScan = document.getElementById('btn-tab-scan');
+const btnTabHistory = document.getElementById('btn-tab-history');
 const viewChanges = document.getElementById('view-changes');
 const viewCommits = document.getElementById('view-commits');
 const viewScan = document.getElementById('view-scan');
+const viewHistory = document.getElementById('view-history');
 const commitsListA = document.getElementById('commits-list-a');
 const commitsListB = document.getElementById('commits-list-b');
 const commitsTitleA = document.getElementById('commits-title-a');
@@ -1302,11 +1304,30 @@ function renderDiffContent(diffText) {
       <tbody>
   `;
   
+  let hunkIndex = -1;
+  const isCompare = appState.currentDiff && appState.currentDiff.type === 'cross-project';
+  const sourceProject = appState.currentDiff ? appState.currentDiff.sourceProject : 'PROJECT_A';
+  const destProject = sourceProject === 'PROJECT_A' ? 'PROJECT_B' : 'PROJECT_A';
+
   for (const row of parsed.rows) {
     if (row.type === 'chunk-header') {
+      hunkIndex++;
+      let hunkBtnHtml = '';
+      if (isCompare) {
+        hunkBtnHtml = `
+          <button class="btn btn-primary sync-hunk-btn" style="padding: 0.15rem 0.5rem; font-size: 0.7rem; border-radius: 4px; height: 22px; cursor: pointer; display: inline-flex; align-items: center; gap: 0.25rem; margin-left: auto; background: rgba(16, 185, 129, 0.2); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399;" onclick="syncHunk('${escapeHtml(appState.currentDiff.file)}', '${sourceProject}', '${destProject}', ${hunkIndex})">
+            <i data-lucide="chevrons-right" style="width: 12px; height: 12px; stroke-width: 3px;"></i>
+            <span>Sync Hunk</span>
+          </button>
+        `;
+      }
+
       html += `
         <tr class="diff-row-chunk-header">
-          <td colspan="4" class="diff-chunk-header">${escapeHtml(row.text)}</td>
+          <td colspan="4" class="diff-chunk-header" style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+            <span>${escapeHtml(row.text)}</span>
+            ${hunkBtnHtml}
+          </td>
         </tr>
       `;
     } else {
@@ -1903,23 +1924,27 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Bind tab navigation
-  if (btnTabChanges && btnTabCommits && btnTabScan) {
+  if (btnTabChanges && btnTabCommits && btnTabScan && btnTabHistory) {
     btnTabChanges.addEventListener('click', () => {
       btnTabChanges.classList.add('active');
       btnTabCommits.classList.remove('active');
       btnTabScan.classList.remove('active');
+      btnTabHistory.classList.remove('active');
       viewChanges.style.display = 'grid';
       viewCommits.style.display = 'none';
       viewScan.style.display = 'none';
+      viewHistory.style.display = 'none';
     });
 
     btnTabCommits.addEventListener('click', () => {
       btnTabCommits.classList.add('active');
       btnTabChanges.classList.remove('active');
       btnTabScan.classList.remove('active');
+      btnTabHistory.classList.remove('active');
       viewChanges.style.display = 'none';
       viewCommits.style.display = 'grid';
       viewScan.style.display = 'none';
+      viewHistory.style.display = 'none';
       fetchCommits();
     });
 
@@ -1927,10 +1952,24 @@ document.addEventListener('DOMContentLoaded', () => {
       btnTabScan.classList.add('active');
       btnTabChanges.classList.remove('active');
       btnTabCommits.classList.remove('active');
+      btnTabHistory.classList.remove('active');
       viewChanges.style.display = 'none';
       viewCommits.style.display = 'none';
       viewScan.style.display = 'grid';
+      viewHistory.style.display = 'none';
       scanProjects();
+    });
+
+    btnTabHistory.addEventListener('click', () => {
+      btnTabHistory.classList.add('active');
+      btnTabChanges.classList.remove('active');
+      btnTabCommits.classList.remove('active');
+      btnTabScan.classList.remove('active');
+      viewChanges.style.display = 'none';
+      viewCommits.style.display = 'none';
+      viewScan.style.display = 'none';
+      viewHistory.style.display = 'grid';
+      fetchSyncHistory();
     });
   }
 
@@ -1989,13 +2028,246 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  if (btnScanSyncBToA) {
-    btnScanSyncBToA.addEventListener('click', () => {
-      scanSyncAll('b-to-a');
-    });
+  const btnClearHistory = document.getElementById('btn-clear-history');
+  if (btnClearHistory) {
+    btnClearHistory.addEventListener('click', clearHistory);
+  }
+
+  const btnRefreshHistory = document.getElementById('btn-refresh-history');
+  if (btnRefreshHistory) {
+    btnRefreshHistory.addEventListener('click', fetchSyncHistory);
   }
 
   initLiveSync();
   fetchLiveSyncStatus();
   fetchStatus();
 });
+
+// Selective hunk synchronization
+async function syncHunk(file, from, to, hunkIndex) {
+  const confirmed = await showConfirm(`Are you sure you want to sync this hunk of "${file}" from ${appState[from].name} to ${appState[to].name}?`, false);
+  if (!confirmed) return;
+
+  try {
+    const response = await fetch('/api/sync-hunk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file, from, to, hunkIndex })
+    });
+    const data = await response.json();
+    
+    if (data.error) {
+      showToast(data.error, 'error');
+      return;
+    }
+
+    showToast(data.message, 'success');
+    
+    // Refresh the diff in modal to show updated comparison
+    showDiff(file, true, from);
+    
+    // Refresh dashboard list
+    if (typeof fetchStatus === 'function') fetchStatus();
+  } catch (error) {
+    console.error('Error syncing hunk:', error);
+    showToast('Failed to sync hunk: ' + error.message, 'error');
+  }
+}
+
+// Fetch and render synchronization history
+async function fetchSyncHistory() {
+  const historyListBody = document.getElementById('history-list-body');
+  const countHistory = document.getElementById('count-history');
+  
+  if (!historyListBody) return;
+
+  historyListBody.innerHTML = `
+    <tr>
+      <td colspan="6" style="text-align: center; padding: 2rem; color: var(--text-muted);">
+        <i data-lucide="loader" class="spinner" style="margin: 0 auto 0.5rem; width: 24px; height: 24px; display: block;"></i>
+        Loading history...
+      </td>
+    </tr>
+  `;
+  initIcons();
+
+  try {
+    const response = await fetch('/api/sync-history');
+    const history = await response.json();
+
+    if (history.error) {
+      showToast(history.error, 'error');
+      return;
+    }
+
+    appState.syncHistory = history;
+
+    if (countHistory) {
+      countHistory.textContent = history.length;
+    }
+
+    if (history.length === 0) {
+      historyListBody.innerHTML = `
+        <tr>
+          <td colspan="6" style="text-align: center; padding: 3rem; color: var(--text-muted);">
+            <i data-lucide="archive" style="margin: 0 auto 0.5rem; width: 32px; height: 32px; display: block; opacity: 0.5;"></i>
+            No synchronization history recorded yet.
+          </td>
+        </tr>
+      `;
+      initIcons();
+      return;
+    }
+
+    let html = '';
+    history.forEach(entry => {
+      const date = new Date(entry.timestamp).toLocaleString();
+      const typeBadgeStyle = entry.type === 'rollback' 
+        ? 'background: rgba(167, 139, 250, 0.15); color: #c084fc; border: 1px solid rgba(167, 139, 250, 0.3);'
+        : entry.type === 'hunk'
+          ? 'background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3);'
+          : 'background: rgba(6, 182, 212, 0.15); color: var(--cyan); border: 1px solid rgba(6, 182, 212, 0.3);';
+
+      const actionBadgeStyle = entry.action === 'rollback'
+        ? 'background: rgba(167, 139, 250, 0.1); color: #c084fc;'
+        : entry.action === 'delete'
+          ? 'background: rgba(244, 63, 94, 0.1); color: var(--rose-text);'
+          : entry.action === 'hunk-sync'
+            ? 'background: rgba(16, 185, 129, 0.1); color: var(--emerald-text);'
+            : 'background: rgba(16, 185, 129, 0.1); color: var(--emerald-text);';
+
+      const rowOpacity = entry.rolledBack ? 'opacity: 0.5; text-decoration: line-through;' : '';
+      const showRollbackBtn = !entry.rolledBack && entry.action !== 'rollback';
+
+      html += `
+        <tr style="border-bottom: 1px solid var(--border); transition: background 0.2s; ${rowOpacity}">
+          <td style="padding: 0.75rem 1rem; color: var(--text-muted); font-size: 0.8rem;">${date}</td>
+          <td style="padding: 0.75rem 1rem;">
+            <span style="display: inline-block; padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; ${typeBadgeStyle}">
+              ${entry.type}
+            </span>
+          </td>
+          <td style="padding: 0.75rem 1rem;">
+            <span style="display: inline-block; padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; ${actionBadgeStyle}">
+              ${entry.action}
+            </span>
+          </td>
+          <td style="padding: 0.75rem 1rem; font-family: monospace; color: var(--text-main); font-size: 0.8rem; word-break: break-all;">${escapeHtml(entry.file)}</td>
+          <td style="padding: 0.75rem 1rem; font-weight: 500; font-size: 0.8rem;">
+            ${escapeHtml(entry.from)} ➔ ${escapeHtml(entry.to)}
+          </td>
+          <td style="padding: 0.75rem 1rem; text-align: right; white-space: nowrap;">
+            ${entry.diffText && entry.diffText.trim() ? `
+              <button class="btn btn-outline" style="font-size: 0.7rem; padding: 0.2rem 0.5rem; height: auto; gap: 0.25rem; color: var(--cyan); border-color: rgba(6, 182, 212, 0.25); background: rgba(6, 182, 212, 0.04); margin-right: 0.35rem;" onclick="viewHistoryDiff('${entry.id}')">
+                <i data-lucide="eye" style="width: 12px; height: 12px;"></i>
+                <span>View Changes</span>
+              </button>
+            ` : ''}
+            ${showRollbackBtn ? `
+              <button class="btn btn-outline" style="font-size: 0.7rem; padding: 0.2rem 0.5rem; height: auto; gap: 0.25rem; color: var(--rose-text); border-color: rgba(244, 63, 94, 0.25); background: rgba(244, 63, 94, 0.04);" onclick="rollbackHistoryEntry('${entry.id}')">
+                <i data-lucide="undo" style="width: 12px; height: 12px;"></i>
+                <span>Rollback</span>
+              </button>
+            ` : entry.rolledBack ? `
+              <span style="color: var(--text-muted); font-size: 0.75rem; font-style: italic; display: inline-block; vertical-align: middle;">Rolled Back</span>
+            ` : `
+              <span style="color: var(--text-muted); font-size: 0.75rem; display: inline-block; vertical-align: middle;">-</span>
+            `}
+          </td>
+        </tr>
+      `;
+    });
+
+    historyListBody.innerHTML = html;
+    initIcons();
+  } catch (error) {
+    console.error('Failed to load history:', error);
+    showToast('Failed to load history: ' + error.message, 'error');
+  }
+}
+
+// Rollback specific history entry
+async function rollbackHistoryEntry(id) {
+  const confirmed = await showConfirm('Are you sure you want to rollback this synchronization? This will restore the file to its previous state.', true);
+  if (!confirmed) return;
+
+  try {
+    const response = await fetch('/api/sync-history/rollback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id })
+    });
+    const data = await response.json();
+
+    if (data.error) {
+      showToast(data.error, 'error');
+      return;
+    }
+
+    showToast(data.message, 'success');
+    fetchSyncHistory();
+    if (typeof fetchStatus === 'function') fetchStatus();
+  } catch (error) {
+    console.error('Rollback error:', error);
+    showToast('Rollback failed: ' + error.message, 'error');
+  }
+}
+
+// Clear all history
+async function clearHistory() {
+  const confirmed = await showConfirm('Are you sure you want to permanently clear all synchronization history and backup files?', true);
+  if (!confirmed) return;
+
+  try {
+    const response = await fetch('/api/sync-history/clear', { method: 'POST' });
+    const data = await response.json();
+
+    if (data.error) {
+      showToast(data.error, 'error');
+      return;
+    }
+
+    showToast(data.message, 'success');
+    fetchSyncHistory();
+  } catch (error) {
+    console.error('Clear history error:', error);
+    showToast('Failed to clear history: ' + error.message, 'error');
+  }
+}
+
+// Display the changes/diff of a specific history log entry
+function viewHistoryDiff(id) {
+  if (!appState.syncHistory) return;
+  const entry = appState.syncHistory.find(e => e.id === id);
+  if (!entry) return;
+
+  if (!entry.diffText || !entry.diffText.trim()) {
+    showToast('No changes recorded for this action.', 'info');
+    return;
+  }
+
+  // Configure read-only diff modal state
+  appState.currentDiff = {
+    file: entry.file,
+    type: 'history',
+    sourceProject: 'PROJECT_A',
+    diffText: entry.diffText
+  };
+
+  diffModalFilename.textContent = entry.file.split('/').pop();
+  diffModalDesc.textContent = `Historical Changes: ${entry.from} ➔ ${entry.to} (${entry.action})`;
+
+  diffModalBadge.textContent = 'History Log Diff';
+  diffModalBadge.style.background = 'rgba(245, 158, 11, 0.15)';
+  diffModalBadge.style.color = '#fbbf24';
+  diffModalBadge.style.borderColor = 'rgba(245, 158, 11, 0.3)';
+
+  // Hide action buttons in history view
+  modalMergeBtn.style.display = 'none';
+  modalSyncBtn.style.display = 'none';
+  modalDiscardBtn.style.display = 'none';
+
+  renderDiffContent(entry.diffText);
+  diffModal.classList.add('active');
+  initIcons();
+}
