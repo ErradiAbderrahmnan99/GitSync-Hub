@@ -993,16 +993,6 @@ function isGitIgnored(repoPath, relativePath) {
   }
 }
 
-function isActiveChange(repoPath, relativePath) {
-  try {
-    const output = execSync(`git status --porcelain -u "${relativePath}"`, { cwd: repoPath, encoding: 'utf8' });
-    return output.trim().length > 0;
-  } catch (err) {
-    console.error(`[Live Sync] Error checking git status for ${relativePath}:`, err.message);
-    return false;
-  }
-}
-
 function startLiveSync(mode) {
   stopLiveSync();
   
@@ -1044,11 +1034,6 @@ function startLiveSync(mode) {
     
     // Check if ignored by git
     if (isGitIgnored(sourcePath, relativePath)) {
-      return;
-    }
-
-    // Only sync if the file is in git status (Active Changes)
-    if (!isActiveChange(sourcePath, relativePath)) {
       return;
     }
 
