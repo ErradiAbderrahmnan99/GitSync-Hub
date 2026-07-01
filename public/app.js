@@ -543,10 +543,22 @@ async function fetchCommits() {
   `;
   initIcons();
 
+  const limitVal = document.getElementById('commits-limit')?.value || '25';
+  const authorVal = document.getElementById('commits-filter-author')?.value || '';
+  const dateStartVal = document.getElementById('commits-filter-date-start')?.value || '';
+  const dateEndVal = document.getElementById('commits-filter-date-end')?.value || '';
+
+  const params = new URLSearchParams({
+    limit: limitVal,
+    author: authorVal,
+    dateStart: dateStartVal,
+    dateEnd: dateEndVal
+  });
+
   try {
     const [resA, resB] = await Promise.all([
-      fetch(`/api/commits?project=PROJECT_A`),
-      fetch(`/api/commits?project=PROJECT_B`)
+      fetch(`/api/commits?project=PROJECT_A&${params.toString()}`),
+      fetch(`/api/commits?project=PROJECT_B&${params.toString()}`)
     ]);
 
     const dataA = await resA.json();
@@ -563,6 +575,33 @@ async function fetchCommits() {
     showToast('Failed to fetch commits: ' + error.message, 'error');
     commitsListA.innerHTML = `<div class="empty-state"><p>Error loading commits.</p></div>`;
     commitsListB.innerHTML = `<div class="empty-state"><p>Error loading commits.</p></div>`;
+  }
+}
+
+// Fetch and populate unique commit authors dropdown
+async function fetchAndPopulateAuthors() {
+  const authorSelect = document.getElementById('commits-filter-author');
+  if (!authorSelect) return;
+
+  try {
+    const response = await fetch('/api/commits-authors');
+    const authors = await response.json();
+
+    if (authors.error) {
+      console.error('Error loading authors:', authors.error);
+      return;
+    }
+
+    // Retain 'All Authors' option
+    authorSelect.innerHTML = '<option value="">All Authors</option>';
+    authors.forEach(author => {
+      const opt = document.createElement('option');
+      opt.value = author;
+      opt.textContent = author;
+      authorSelect.appendChild(opt);
+    });
+  } catch (err) {
+    console.error('Failed to populate authors:', err);
   }
 }
 
@@ -2037,6 +2076,41 @@ document.addEventListener('DOMContentLoaded', () => {
   if (btnRefreshHistory) {
     btnRefreshHistory.addEventListener('click', fetchSyncHistory);
   }
+
+  // Bind commits history filter controls
+  const btnCommitsFilter = document.getElementById('btn-commits-filter');
+  if (btnCommitsFilter) {
+    btnCommitsFilter.addEventListener('click', fetchCommits);
+  }
+
+  const btnCommitsFilterReset = document.getElementById('btn-commits-filter-reset');
+  if (btnCommitsFilterReset) {
+    btnCommitsFilterReset.addEventListener('click', () => {
+      const limitSelect = document.getElementById('commits-limit');
+      const authorSelect = document.getElementById('commits-filter-author');
+      const dateStartInput = document.getElementById('commits-filter-date-start');
+      const dateEndInput = document.getElementById('commits-filter-date-end');
+
+      if (limitSelect) limitSelect.value = '25';
+      if (authorSelect) authorSelect.value = '';
+      if (dateStartInput) dateStartInput.value = '';
+      if (dateEndInput) dateEndInput.value = '';
+
+      fetchCommits();
+    });
+  }
+
+  const commitsLimit = document.getElementById('commits-limit');
+  if (commitsLimit) {
+    commitsLimit.addEventListener('change', fetchCommits);
+  }
+
+  const commitsAuthor = document.getElementById('commits-filter-author');
+  if (commitsAuthor) {
+    commitsAuthor.addEventListener('change', fetchCommits);
+  }
+
+  fetchAndPopulateAuthors();
 
   initLiveSync();
   fetchLiveSyncStatus();

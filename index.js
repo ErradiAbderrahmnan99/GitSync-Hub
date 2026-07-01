@@ -991,7 +991,7 @@ app.post('/api/discard', (req, res) => {
 
 // GET list of commits for a project
 app.get('/api/commits', (req, res) => {
-  const { project } = req.query;
+  const { project, limit, author, dateStart, dateEnd } = req.query;
   const cwd = PROJECTS[project];
   
   if (!cwd || !fs.existsSync(cwd)) {
@@ -999,18 +999,79 @@ app.get('/api/commits', (req, res) => {
   }
   
   try {
-    const logOutput = execSync('git log -n 25 --pretty=format:"%H|%an|%ad|%s" --date=short', { cwd, encoding: 'utf8' });
+    let logCmd = 'git log --pretty=format:"%H|%an|%ad|%s" --date=short';
+    
+    // Parse limit
+    if (limit && limit !== 'all') {
+      const parsedLimit = parseInt(limit);
+      if (!isNaN(parsedLimit) && parsedLimit > 0) {
+        logCmd += ` -n ${parsedLimit}`;
+      }
+    } else if (!limit) {
+      logCmd += ' -n 25'; // default
+    }
+
+    // Filter by author (sanitize double quotes and backslashes)
+    if (author && author.trim()) {
+      const cleanAuthor = author.replace(/["\\]/g, '');
+      logCmd += ` --author="${cleanAuthor}"`;
+    }
+
+    // Filter by date range (sanitize double quotes and backslashes)
+    if (dateStart && dateStart.trim()) {
+      const cleanStart = dateStart.replace(/["\\]/g, '');
+      logCmd += ` --since="${cleanStart}"`;
+    }
+    if (dateEnd && dateEnd.trim()) {
+      const cleanEnd = dateEnd.replace(/["\\]/g, '');
+      logCmd += ` --until="${cleanEnd}"`;
+    }
+
+    const logOutput = execSync(logCmd, { cwd, encoding: 'utf8' });
     if (!logOutput.trim()) {
       return res.json([]);
     }
     const commits = logOutput.trim().split('\n').map(line => {
-      const [hash, author, date, ...messageParts] = line.split('|');
+      const [hash, authorName, dateVal, ...messageParts] = line.split('|');
       const message = messageParts.join('|');
-      return { hash, author, date, message };
+      return { hash, author: authorName, date: dateVal, message };
     });
     res.json(commits);
   } catch (error) {
     res.status(500).json({ error: `Failed to fetch commits: ${error.message}` });
+  }
+});
+
+// GET list of unique commit authors from both projects
+app.get('/api/commits-authors', (req, res) => {
+  try {
+    const authors = new Set();
+    
+    // Read authors from PROJECT_A
+    const pathA = PROJECTS.PROJECT_A;
+    if (pathA && fs.existsSync(pathA)) {
+      try {
+        const outA = execSync('git log --format="%an"', { cwd: pathA, encoding: 'utf8' });
+        outA.split('\n').map(a => a.trim()).filter(Boolean).forEach(a => authors.add(a));
+      } catch (err) {
+        console.error('Error fetching authors from A:', err);
+      }
+    }
+    
+    // Read authors from PROJECT_B
+    const pathB = PROJECTS.PROJECT_B;
+    if (pathB && fs.existsSync(pathB)) {
+      try {
+        const outB = execSync('git log --format="%an"', { cwd: pathB, encoding: 'utf8' });
+        outB.split('\n').map(a => a.trim()).filter(Boolean).forEach(a => authors.add(a));
+      } catch (err) {
+        console.error('Error fetching authors from B:', err);
+      }
+    }
+    
+    res.json(Array.from(authors).sort());
+  } catch (error) {
+    res.status(500).json({ error: `Failed to fetch authors: ${error.message}` });
   }
 });
 

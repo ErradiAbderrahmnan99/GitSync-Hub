@@ -229,6 +229,53 @@
 
     <!-- Commits History View -->
     <main class="main-layout app-view" id="view-commits" style="display: none;">
+      <!-- Commits Control & Filter Panel -->
+      <section class="panel-container glass-card" style="grid-column: 1 / -1; padding: 1.25rem;">
+        <div style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end;">
+          <!-- Limit Option -->
+          <div style="display: flex; flex-direction: column; gap: 0.35rem; min-width: 100px;">
+            <label style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">Load Limit</label>
+            <select id="commits-limit" class="config-input" style="height: 38px; border-radius: 8px; border: 1px solid var(--border); background: rgba(0,0,0,0.3); color: var(--text-main); font-weight: 600; cursor: pointer; outline: none; padding: 0 0.75rem;">
+              <option value="10">10 Commits</option>
+              <option value="15">15 Commits</option>
+              <option value="20">20 Commits</option>
+              <option value="25" selected>25 Commits</option>
+              <option value="50">50 Commits</option>
+              <option value="100">100 Commits</option>
+              <option value="all">All Commits</option>
+            </select>
+          </div>
+          <!-- Author/Username Filter -->
+          <div style="display: flex; flex-direction: column; gap: 0.35rem; flex: 1; min-width: 180px;">
+            <label style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">Author / Username</label>
+            <select id="commits-filter-author" class="config-input" style="height: 38px; border-radius: 8px; border: 1px solid var(--border); background: rgba(0,0,0,0.3); color: var(--text-main); cursor: pointer; outline: none; padding: 0 0.75rem; width: 100%;">
+              <option value="">All Authors</option>
+            </select>
+          </div>
+          <!-- Date Start -->
+          <div style="display: flex; flex-direction: column; gap: 0.35rem; min-width: 140px;">
+            <label style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">Since Date</label>
+            <input type="date" id="commits-filter-date-start" class="config-input" style="height: 38px; border-radius: 8px; border: 1px solid var(--border); background: rgba(0,0,0,0.3); color: var(--text-main); padding: 0 0.75rem; outline: none; width: 100%;">
+          </div>
+          <!-- Date End -->
+          <div style="display: flex; flex-direction: column; gap: 0.35rem; min-width: 140px;">
+            <label style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">Until Date</label>
+            <input type="date" id="commits-filter-date-end" class="config-input" style="height: 38px; border-radius: 8px; border: 1px solid var(--border); background: rgba(0,0,0,0.3); color: var(--text-main); padding: 0 0.75rem; outline: none; width: 100%;">
+          </div>
+          <!-- Action Buttons -->
+          <div style="display: flex; gap: 0.5rem;">
+            <button id="btn-commits-filter" class="btn btn-primary" style="height: 38px; padding: 0 1.25rem;">
+              <i data-lucide="filter"></i>
+              <span>Apply Filters</span>
+            </button>
+            <button id="btn-commits-filter-reset" class="btn btn-outline" style="height: 38px; padding: 0 1rem; color: var(--text-muted); border-color: var(--border);">
+              <i data-lucide="rotate-ccw"></i>
+              <span>Reset</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
       <!-- Project A Commits -->
       <section class="panel-container">
         <div class="panel-header header-cyan">
